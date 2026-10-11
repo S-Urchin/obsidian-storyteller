@@ -2021,13 +2021,31 @@ export class ComicView extends TextFileView {
 	private sizedInput(parent: HTMLElement, cls: string, placeholder: string): HTMLInputElement {
 		const input = parent.createEl("input", { cls, attr: { type: "text", placeholder, spellcheck: "false" } });
 		input.addEventListener("input", () => this.fitInput(input));
+		// Roomier while editing (see fitInput), snug again afterwards.
+		input.addEventListener("focus", () => this.fitInput(input));
+		input.addEventListener("blur", () => this.fitInput(input, false));
 		window.requestAnimationFrame(() => this.fitInput(input));
 		return input;
 	}
 
-	private fitInput(input: HTMLInputElement) {
-		// The paper uses a monospace font, so character units give an exact fit.
-		input.setCssStyles({ width: Math.max(input.value.length || input.placeholder.length, 1) + "ch" });
+	/**
+	 * Sizes a speaker field to its text. The paper uses a monospace font, so character
+	 * units fit exactly. While the field is being edited it's widened to the longest
+	 * autocomplete name that matches what's typed (plus room for the cursor): the
+	 * browser previews a highlighted suggestion inside the field without any event,
+	 * and an exact-fit field would cut that preview off ("URCH" instead of "URCHIN").
+	 */
+	private fitInput(input: HTMLInputElement, editing = input.ownerDocument.activeElement === input) {
+		let chars = Math.max(input.value.length || input.placeholder.length, 1);
+		if (editing) {
+			const typed = input.value.trim().toUpperCase();
+			const listId = input.getAttribute("list");
+			const options = listId ? Array.from(input.ownerDocument.querySelectorAll<HTMLOptionElement>(`datalist[id="${listId}"] option`)) : [];
+			for (const o of options) if (o.value.toUpperCase().startsWith(typed)) chars = Math.max(chars, o.value.length);
+			chars += 1;
+		}
+		// +2px: the browser rounds the field's width down, which would otherwise clip the last letter.
+		input.setCssStyles({ width: `calc(${chars}ch + 2px)` });
 	}
 
 	/** Container element shared by pages, panels and blocks: highlight, revision, lock and pin state. */

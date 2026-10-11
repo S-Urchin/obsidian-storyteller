@@ -510,7 +510,17 @@
 .st-balloon-num { white-space: pre; }
 .st-root .st-sheet input.st-speaker { flex: 0 0 auto; min-width: 1ch; }
 /* the autocomplete list adds a dropdown arrow that would eat into the name */
-.st-root .st-sheet input.st-speaker::-webkit-calendar-picker-indicator { display: none; }
+/* Chrome draws a dropdown arrow inside fields that have an autocomplete list, and its own
+   style for it is !important, so "display: none" alone loses. Collapse it instead: these
+   properties aren't locked, and without them the arrow eats ~2 letters of the name. */
+.st-root .st-sheet input.st-speaker::-webkit-calendar-picker-indicator {
+	display: none;
+	width: 0;
+	height: 0;
+	margin: 0;
+	padding: 0;
+	opacity: 0;
+}
 .st-colon { white-space: pre; }
 
 /* ---------- add buttons ---------- */
