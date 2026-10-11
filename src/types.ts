@@ -25,8 +25,21 @@ export interface ItemMeta {
  * How a block type is laid out in the editor and in the Word export.
  * - description: full-width prose (panel descriptions, scene directions)
  * - lettering: "1. SPEAKER (modifier):<tab>text" — dialogue, captions, SFX, thoughts
+ * - freestyle: anything at all, laid out by the block's own format (align, indent, size, box)
  */
-export type BlockStyle = "description" | "lettering";
+export type BlockStyle = "description" | "lettering" | "freestyle";
+
+/** Whole-block layout for freestyle blocks. */
+export interface FreeFormat {
+	align: "left" | "center" | "right";
+	/** Start at the dialogue column (2") instead of the margin. */
+	indent: boolean;
+	size: "small" | "normal" | "large";
+	/** Draw a border around the block. */
+	box: boolean;
+}
+
+export const DEFAULT_FREE_FORMAT: FreeFormat = { align: "left", indent: false, size: "normal", box: false };
 
 export interface BlockType {
 	id: string;
@@ -66,6 +79,8 @@ export interface Block extends ItemMeta {
 	speaker: string;
 	modifier: string;
 	text: string;
+	/** Freestyle blocks only. */
+	format?: FreeFormat;
 }
 
 export interface Panel extends ItemMeta {
@@ -112,6 +127,8 @@ export interface StorytellerSettings {
 	paletteSections: PaletteSection[];
 	/** Palette column width in px; wide enough and blocks become editable in place. */
 	paletteWidth: number;
+	/** Pages panel shown as a slim rail of page numbers. */
+	pageNavCollapsed: boolean;
 	/** Block type ids added to every new panel. */
 	newPanelBlocks: string[];
 	/** Number of panels added to a new page. */

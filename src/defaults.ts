@@ -6,9 +6,10 @@ export const DEFAULT_BLOCK_TYPES: BlockType[] = [
 	{ id: "caption", name: "Caption", color: "#a855f7", style: "lettering", numbered: true, defaultSpeaker: "CAPTION", fixedSpeaker: true, defaultText: "" },
 	{ id: "thought", name: "Thought", color: "#06b6d4", style: "lettering", numbered: true, defaultSpeaker: "", fixedSpeaker: false, defaultText: "" },
 	{ id: "sfx", name: "SFX", color: "#f97316", style: "lettering", numbered: true, defaultSpeaker: "SFX", fixedSpeaker: true, defaultText: "" },
+	{ id: "freestyle", name: "Freestyle", color: "#14b8a6", style: "freestyle", numbered: false, defaultSpeaker: "", fixedSpeaker: false, defaultText: "" },
 ];
 
-export const SETTINGS_SCHEMA = 4;
+export const SETTINGS_SCHEMA = 5;
 export const EXPORT_FOLDER = "Exported";
 
 export const DEFAULT_SETTINGS: StorytellerSettings = {
@@ -17,6 +18,7 @@ export const DEFAULT_SETTINGS: StorytellerSettings = {
 	presets: [],
 	paletteSections: [],
 	paletteWidth: 200,
+	pageNavCollapsed: false,
 	newPanelBlocks: ["description"],
 	newPagePanels: 1,
 	fontFamily: '"Courier Final Draft", "Courier Prime", "Courier New", Courier, monospace',

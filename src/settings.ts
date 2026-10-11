@@ -28,6 +28,8 @@ export class StorytellerSettingTab extends PluginSettingTab {
 			const row = new Setting(containerEl).setName(type.name).setDesc(
 				type.style === "lettering"
 					? `Lettering${type.numbered ? ", numbered" : ""}${type.defaultSpeaker ? `, speaker ${type.defaultSpeaker}` : ""}`
+					: type.style === "freestyle"
+					? "Freestyle"
 					: "Description"
 			);
 			const swatch = row.nameEl.createSpan({ cls: "st-settings-swatch" });

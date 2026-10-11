@@ -2,6 +2,7 @@ import { normalizePath, Notice, Plugin, TFile, TFolder } from "obsidian";
 import { DEFAULT_SETTINGS, EXPORT_FOLDER, FILE_EXTENSION, SETTINGS_SCHEMA, VIEW_TYPE_COMIC } from "./defaults";
 import { newDoc, normalizeDoc } from "./doc";
 import { ensureSections } from "./palette";
+import { HOVER_SOURCE } from "./links";
 import { exportDocx } from "./export-docx";
 import { StorytellerSettingTab } from "./settings";
 import { ComicDoc, StorytellerSettings } from "./types";
@@ -14,6 +15,8 @@ export default class StorytellerPlugin extends Plugin {
 		await this.loadSettings();
 
 		this.registerView(VIEW_TYPE_COMIC, (leaf) => new ComicView(leaf, this));
+		// Ctrl+hover a [[link]] in a comment for Obsidian's page preview (configurable under Page preview).
+		this.registerHoverLinkSource(HOVER_SOURCE, { display: "Storyteller comic comments", defaultMod: true });
 		this.registerExtensions([FILE_EXTENSION], VIEW_TYPE_COMIC);
 		this.addSettingTab(new StorytellerSettingTab(this.app, this));
 
@@ -34,6 +37,16 @@ export default class StorytellerPlugin extends Plugin {
 			id: "toggle-read-mode",
 			name: "Toggle read mode",
 			checkCallback: (checking) => this.withView(checking, (v) => v.toggleReadMode()),
+		});
+		this.addCommand({
+			id: "swap-page",
+			name: "Swap current page with\u2026",
+			checkCallback: (checking) => this.withView(checking, (v) => v.pickCurrentPage("swap")),
+		});
+		this.addCommand({
+			id: "move-page",
+			name: "Move current page to position\u2026",
+			checkCallback: (checking) => this.withView(checking, (v) => v.pickCurrentPage("move")),
 		});
 		this.addCommand({
 			id: "show-shortcuts",
@@ -92,7 +105,12 @@ export default class StorytellerPlugin extends Plugin {
 		if ((saved.schema ?? 1) < 3 && !saved.exportFolder) this.settings.exportFolder = EXPORT_FOLDER;
 		// v3 had "paper" (always white) and "theme"; dark paper arrived in v4, following Obsidian by default.
 		if (!["auto", "light", "dark"].includes(this.settings.paperMode)) this.settings.paperMode = "auto";
-		for (const t of this.settings.blockTypes) if (t.style !== "lettering") t.style = "description";
+		// v5 adds the Freestyle block for existing installs too.
+		if ((saved.schema ?? 1) < 5 && !this.settings.blockTypes.some((t) => t.id === "freestyle")) {
+			const free = DEFAULT_SETTINGS.blockTypes.find((t) => t.id === "freestyle");
+			if (free) this.settings.blockTypes.push({ ...free });
+		}
+		for (const t of this.settings.blockTypes) if (!["description", "lettering", "freestyle"].includes(t.style)) t.style = "description";
 		this.settings.schema = SETTINGS_SCHEMA;
 		ensureSections(this.settings);
 	}

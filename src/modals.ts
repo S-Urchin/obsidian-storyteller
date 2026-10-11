@@ -29,10 +29,10 @@ export class BlockTypeModal extends Modal {
 		new Setting(contentEl).setName("Colour").addColorPicker((c) => c.setValue(d.color).onChange((v) => (d.color = v)));
 		new Setting(contentEl)
 			.setName("Layout")
-			.setDesc("Description: prose, like a panel description. Lettering: 1. SPEAKER (modifier): text.")
+			.setDesc("Description: prose, like a panel description. Lettering: 1. SPEAKER (modifier): text. Freestyle: anything, with its own alignment, indent, size and box.")
 			.addDropdown((dd) =>
 				dd
-					.addOptions({ description: "Description", lettering: "Lettering (speaker + text)" })
+					.addOptions({ description: "Description", lettering: "Lettering (speaker + text)", freestyle: "Freestyle (anything, your own layout)" })
 					.setValue(d.style)
 					.onChange((v) => {
 						d.style = v as BlockStyle;
@@ -193,15 +193,18 @@ export class HelpModal extends Modal {
 
 	private renderTips(el: HTMLElement) {
 		const tips: [string, string][] = [
+			["Freestyle blocks", "For anything that isn't a description or dialogue: title cards, TO BE CONTINUED, notes to the colorist, lists. Click into one for its toolbar (align, indent, size, box), or right-click \u2192 Freestyle format. Bold, italic and the rest work inside it as usual."],
 			["Your own blocks", "Use + New block type in the palette for anything you need, such as RADIO, FLASHBACK CAPTION or EDITOR'S NOTE. Right-click a finished block and choose “Save as reusable block” to keep it, text included."],
 			["Palette sections", "Group blocks however you like with + New section, and drag blocks between sections. Drag a block from the script into a section to save it there."],
 			["Edit blocks in the palette", "Drag the palette's right edge wider and every block becomes an editor for its name, colour, speaker and default text."],
 			["Comments", "Right-click → Note / Comment opens a card beside the page, as in Google Docs. Resolve it with ✓; the toolbar's comment button can show resolved ones again."],
+			["Link notes in comments", "Type [[ in a comment (or click the link button) to pick a note from your vault. Posted links open the note; Ctrl+click opens it in a new tab and Ctrl+hover shows a preview. Links to notes that don't exist yet appear faded, and clicking one creates the note."],
 			["Pinned & revisions", "The panel button at the top-right lists everything you've pinned or marked for revision. Click an item to jump to it."],
 			["Dark or light paper", "The sun/moon button flips the paper. Right-click it for Auto, which follows Obsidian's theme."],
 			["Spelling", "Shift+right-click inside text for the normal menu with spelling suggestions and paste."],
 			["Oops", "Deleted something? Click Undo in the message that appears, or press Ctrl+Z (press Esc first if you're inside a text box)."],
-			["Lots of pages", "Collapse pages or panels you aren't working on (double-click their heading). While dragging, hold near the top or bottom edge to scroll."],
+			["Swap or move pages", "Right-click a page (its heading, or its entry in the Pages list) and choose \u201cSwap with page\u2026\u201d or \u201cMove to position\u2026\u201d. Pick the other page by clicking it or typing its number. No long drags needed."],
+			["Lots of pages", "Use the Pages list on the left: click a page to jump to it, drag pages there to reorder them, or type a number in \u201cGo to page\u201d. The \u00ab button collapses it to a slim rail of numbers. A red dot means the page needs revision; an amber dot means it has open comments. Alt+PageUp / Alt+PageDown step between pages."],
 		];
 		for (const [title, text] of tips) {
 			const row = el.createDiv("st-help-tip");
@@ -251,6 +254,7 @@ export class HelpModal extends Modal {
 					["Drag the palette edge", "Wider palette = edit blocks in place"],
 					["Sun/moon button", "Light or dark paper (right-click for Auto)"],
 					["Ctrl+E", "Switch between Edit and Read mode"],
+					["Alt+PageUp / Alt+PageDown", "Previous / next page"],
 					["Double-click (in Read mode)", "Edit that line"],
 					["? / Ctrl+/", "Open this help"],
 				],
@@ -269,6 +273,121 @@ export class HelpModal extends Modal {
 				tr.createEl("td", { text: what });
 			}
 		}
+	}
+
+	onClose() {
+		this.contentEl.empty();
+	}
+}
+
+export interface PageChoice {
+	index: number;
+	label: string;
+	detail: string;
+	/** Why this page can't be picked (shown greyed out), e.g. "this page" or "locked". */
+	disabled?: string;
+}
+
+/**
+ * Pick a page from a filterable list: type a number or words from the page,
+ * use ↑/↓ and Enter, or click. Used for "Swap with page…" and "Move to position…".
+ */
+export class PagePickerModal extends Modal {
+	private query = "";
+	private selected = 0;
+	private shown: PageChoice[] = [];
+	private listEl: HTMLElement;
+
+	constructor(app: App, private title: string, private choices: PageChoice[], private onChoose: (index: number) => void) {
+		super(app);
+	}
+
+	onOpen() {
+		this.titleEl.setText(this.title);
+		this.modalEl.addClass("st-picker-modal");
+		const input = this.contentEl.createEl("input", {
+			cls: "st-picker-input",
+			attr: { type: "text", placeholder: "Type a page number or words from the page…", "aria-label": "Filter pages" },
+		});
+		this.listEl = this.contentEl.createDiv({ cls: "st-picker-list", attr: { role: "listbox" } });
+		this.contentEl.createDiv({ cls: "st-picker-hint", text: "↑↓ to move · Enter to choose · Esc to cancel" });
+		input.addEventListener("input", () => {
+			this.query = input.value.trim().toLowerCase();
+			this.selected = 0;
+			this.renderList();
+		});
+		input.addEventListener("keydown", (e) => {
+			if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+				e.preventDefault();
+				this.move(e.key === "ArrowDown" ? 1 : -1);
+			} else if (e.key === "Enter") {
+				e.preventDefault();
+				this.choose(this.shown[this.selected]);
+			}
+		});
+		this.renderList();
+		window.setTimeout(() => input.focus(), 0);
+	}
+
+	private filtered(): PageChoice[] {
+		const q = this.query;
+		if (!q) return this.choices;
+		if (/^\d+$/.test(q)) {
+			// Numbers: the exact page first, then pages whose number starts with it.
+			const n = parseInt(q, 10);
+			const exact = this.choices.filter((c) => c.index + 1 === n);
+			const rest = this.choices.filter((c) => c.index + 1 !== n && String(c.index + 1).startsWith(q));
+			return [...exact, ...rest];
+		}
+		return this.choices.filter((c) => (c.label + " " + c.detail).toLowerCase().includes(q));
+	}
+
+	private renderList() {
+		this.shown = this.filtered();
+		// Start on the first page that can actually be chosen.
+		if (this.shown[this.selected]?.disabled) {
+			const i = this.shown.findIndex((c) => !c.disabled);
+			this.selected = i < 0 ? 0 : i;
+		}
+		this.listEl.empty();
+		if (!this.shown.length) {
+			this.listEl.createDiv({ cls: "st-picker-empty", text: "No matching pages." });
+			return;
+		}
+		this.shown.forEach((c, i) => {
+			const row = this.listEl.createDiv({ cls: "st-picker-row", attr: { role: "option", "aria-selected": String(i === this.selected) } });
+			row.toggleClass("is-selected", i === this.selected);
+			row.toggleClass("is-disabled", !!c.disabled);
+			row.createDiv({ cls: "st-picker-num", text: String(c.index + 1) });
+			const text = row.createDiv("st-picker-text");
+			text.createDiv({ cls: "st-picker-label", text: c.label + (c.disabled ? ` (${c.disabled})` : "") });
+			if (c.detail) text.createDiv({ cls: "st-picker-detail", text: c.detail });
+			row.addEventListener("mousemove", () => {
+				if (this.selected !== i && !c.disabled) {
+					this.selected = i;
+					this.listEl.querySelectorAll(".st-picker-row").forEach((r, j) => r.toggleClass("is-selected", j === i));
+				}
+			});
+			row.addEventListener("click", () => this.choose(c));
+		});
+		this.listEl.querySelector(".is-selected")?.scrollIntoView({ block: "nearest" });
+	}
+
+	private move(dir: 1 | -1) {
+		if (!this.shown.length) return;
+		let i = this.selected;
+		for (let n = 0; n < this.shown.length; n++) {
+			i = (i + dir + this.shown.length) % this.shown.length;
+			if (!this.shown[i].disabled) break;
+		}
+		this.selected = i;
+		this.renderList();
+	}
+
+	private choose(c: PageChoice | undefined) {
+		if (!c || c.disabled) return;
+		this.close();
+		this.onChoose(c.index);
 	}
 
 	onClose() {

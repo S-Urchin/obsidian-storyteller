@@ -8,6 +8,7 @@ import {
 	describeRef,
 	findRef,
 	findType,
+	freeFormat,
 	isLocked,
 	newBlock,
 	newDoc,
@@ -22,11 +23,12 @@ import {
 	wordCount,
 } from "./doc";
 import { MAX_PALETTE, MIN_PALETTE, VIEW_TYPE_COMIC, WIDE_PALETTE } from "./defaults";
-import { BlockTypeModal, ConfirmModal, HelpModal, HelpTab, PromptModal } from "./modals";
+import { BlockTypeModal, ConfirmModal, HelpModal, HelpTab, PageChoice, PagePickerModal, PromptModal } from "./modals";
 import { Marker, parseInline, renderInline, toggleMarker } from "./format";
+import { LinkSuggest, renderLinked } from "./links";
 import { animateRender, capturePositions, motionAllowed, playOnce } from "./motion";
 import { ensureSections, moveToSection, newSection, presetKey, typeKey } from "./palette";
-import { Block, BlockPreset, BlockType, ComicDoc, HIGHLIGHT_COLORS, ItemKind, ItemRef, Page, PaletteSection, Panel, PaperMode, SideNote } from "./types";
+import { Block, BlockPreset, BlockType, ComicDoc, FreeFormat, HIGHLIGHT_COLORS, ItemKind, ItemRef, Page, PaletteSection, Panel, PaperMode, SideNote } from "./types";
 
 type DragPayload =
 	| { kind: "page" | "panel" | "block"; id: string }
@@ -116,6 +118,11 @@ export class ComicView extends TextFileView {
 	private layoutQueued = false;
 
 	private paletteEl: HTMLElement;
+	private navEl: HTMLElement | null = null;
+	private navActiveId: string | null = null;
+	private navSpyQueued = false;
+	private navLockUntil = 0;
+	private navRefreshTimer: number | null = null;
 	private scriptEl: HTMLElement;
 	private sideEl: HTMLElement;
 	private statsEl: HTMLElement;
@@ -254,7 +261,7 @@ export class ComicView extends TextFileView {
 		if (ws?.on) this.registerEvent(ws.on("css-change", () => this.updatePaperIcon()));
 		// Over the toolbar or other dead areas: hide the insertion line so it never promises a drop that won't happen.
 		this.contentEl.addEventListener("dragover", (e) => {
-			if (this.drag && !(e.target as HTMLElement).closest(".st-script, .st-palette")) this.clearDropHint();
+			if (this.drag && !(e.target as HTMLElement).closest(".st-script, .st-palette, .st-nav")) this.clearDropHint();
 		});
 	}
 
@@ -341,6 +348,276 @@ export class ComicView extends TextFileView {
 		this.renderAll();
 	}
 
+	// ---------------------------------------------------------------- pages panel
+
+	/** Pages list: click to jump, drag to reorder, collapses to a rail of numbers. */
+	private renderNav() {
+		const el = this.navEl;
+		if (!el) return;
+		const s = this.plugin.settings;
+		const collapsed = s.pageNavCollapsed;
+		el.empty();
+
+		const head = el.createDiv("st-nav-head");
+		if (!collapsed) {
+			head.createSpan({ cls: "st-nav-title", text: "Pages" });
+			head.createSpan({ cls: "st-nav-count", text: String(this.doc.pages.length) });
+		}
+		this.iconBtn(head, collapsed ? "chevrons-right" : "chevrons-left", collapsed ? "Expand page list" : "Collapse page list", () => this.setNavCollapsed(!collapsed), "st-nav-toggle");
+
+		if (!collapsed && this.doc.pages.length > 6) {
+			const go = el.createEl("input", { cls: "st-nav-goto", attr: { type: "text", inputmode: "numeric", placeholder: "Go to page #", "aria-label": "Go to page number" } });
+			go.addEventListener("keydown", (e) => {
+				if (e.key === "Enter") {
+					e.preventDefault();
+					const n = parseInt(go.value, 10);
+					const page = this.doc.pages[n - 1];
+					if (page) this.navTo(page.id);
+					else new Notice(`There are ${this.doc.pages.length} pages.`);
+					go.select();
+				} else if (e.key === "Escape") {
+					go.value = "";
+					go.blur();
+				}
+			});
+		}
+
+		// Per-page status, gathered in one pass.
+		const status = new Map<string, { revision: boolean; notes: number; pinned: boolean }>();
+		for (const ref of walk(this.doc)) {
+			const st = status.get(ref.page.id) ?? { revision: false, notes: 0, pinned: false };
+			st.revision ||= ref.item.revision;
+			st.pinned ||= ref.item.pinned;
+			st.notes += ref.item.notes.filter((n) => !n.resolved).length;
+			status.set(ref.page.id, st);
+		}
+
+		const list = el.createDiv("st-nav-list");
+		this.doc.pages.forEach((page, i) => {
+			const st = status.get(page.id) ?? { revision: false, notes: 0, pinned: false };
+			const snippet = this.pageSnippet(page);
+			const n = page.panels.length;
+			const summary = `${pageLabel(i, s.pageNumberStyle)} · ${n} panel${n === 1 ? "" : "s"}` + (st.revision ? " · needs revision" : "") + (st.notes ? ` · ${st.notes} comment${st.notes === 1 ? "" : "s"}` : "");
+			const item = list.createDiv({
+				cls: "st-nav-item",
+				attr: { "data-page": page.id, "data-drag-item": "", role: "button", tabindex: "0", "aria-label": summary + (snippet ? ` — ${snippet}` : "") },
+			});
+			if (collapsed) item.setAttr("data-tooltip-position", "right");
+			const num = item.createDiv({ cls: "st-nav-num", text: String(i + 1) });
+			num.toggleClass("has-revision", st.revision);
+			num.toggleClass("has-notes", st.notes > 0);
+
+			if (!collapsed) {
+				const detail = item.createDiv("st-nav-detail");
+				const label = detail.createDiv("st-nav-label");
+				label.createSpan({ text: `Page ${i + 1}` });
+				label.createSpan({ cls: "st-nav-meta", text: `${n} panel${n === 1 ? "" : "s"}` });
+				if (st.pinned || page.locked) {
+					const flags = label.createSpan("st-nav-flags");
+					if (st.pinned) setIcon(flags.createSpan({ attr: { "aria-label": "Has pinned items" } }), "pin");
+					if (page.locked) setIcon(flags.createSpan({ attr: { "aria-label": "Locked" } }), "lock");
+				}
+				detail.createDiv({ cls: "st-nav-snippet" + (snippet ? "" : " is-empty"), text: snippet || "No description yet" });
+			}
+
+			item.addEventListener("click", () => this.navTo(page.id));
+			item.addEventListener("contextmenu", (e) => {
+				e.preventDefault();
+				this.itemMenu(e, { kind: "page", item: page, page, pageIndex: i });
+			});
+			item.addEventListener("keydown", (e) => {
+				if (e.key === "Enter" || e.key === " ") {
+					e.preventDefault();
+					this.navTo(page.id);
+				} else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+					e.preventDefault();
+					const sib = (e.key === "ArrowDown" ? item.nextElementSibling : item.previousElementSibling) as HTMLElement | null;
+					sib?.focus();
+				}
+			});
+			if (!page.locked && !this.readMode) {
+				item.setAttr("draggable", "true");
+				item.addEventListener("dragstart", (e) => this.startDrag(e, { kind: "page", id: page.id }, item));
+			}
+		});
+		if (!this.doc.pages.length) list.createDiv({ cls: "st-palette-empty", text: "No pages yet." });
+
+		if (!collapsed && !this.readMode) {
+			const add = el.createEl("button", { cls: "st-nav-add", text: "+ Add page" });
+			add.addEventListener("click", () => this.addPage());
+		}
+
+		// Drag pages within the list to reorder them.
+		list.addEventListener("dragover", (e) => {
+			if (!this.drag || (this.drag.kind !== "page" && this.drag.kind !== "new-page")) return;
+			e.preventDefault();
+			this.setDropEffect(e);
+			this.showDropHint(list, this.dropIndex(list, e.clientY), "nav", null);
+		});
+		list.addEventListener("drop", (e) => {
+			if (!this.drag || (this.drag.kind !== "page" && this.drag.kind !== "new-page")) return;
+			e.preventDefault();
+			const index = this.dropIndex(list, e.clientY);
+			const payload = this.drag;
+			this.endDrag();
+			this.performDrop("pages", null, index, payload);
+		});
+
+		this.navActiveId = null;
+		this.updateNavActive();
+	}
+
+	/** "Swap with page\u2026" / "Move to position\u2026": pick the other page from a list instead of a long drag. */
+	pickPage(pageId: string, action: "swap" | "move") {
+		const pages = this.doc.pages;
+		const from = pages.findIndex((p) => p.id === pageId);
+		if (from < 0) return;
+		if (pages[from].locked) return new Notice("This page is locked. Unlock it to move it.");
+		const choices: PageChoice[] = pages.map((p, j) => ({
+			index: j,
+			label: `Page ${j + 1}`,
+			detail: this.pageSnippet(p) || `${p.panels.length} panel${p.panels.length === 1 ? "" : "s"}, no description yet`,
+			disabled: j === from ? "this page" : action === "swap" && p.locked ? "locked" : undefined,
+		}));
+		const title = action === "swap" ? `Swap page ${from + 1} with\u2026` : `Move page ${from + 1} to position\u2026`;
+		new PagePickerModal(this.app, title, choices, (to) => (action === "swap" ? this.swapPages(from, to) : this.movePage(from, to))).open();
+	}
+
+	/** Command-palette version: acts on the page currently highlighted in the Pages list. */
+	pickCurrentPage(action: "swap" | "move") {
+		const id = this.navActiveId ?? this.doc.pages[0]?.id;
+		if (id) this.pickPage(id, action);
+	}
+
+	private swapPages(a: number, b: number) {
+		const pages = this.doc.pages;
+		const pa = pages[a];
+		const pb = pages[b];
+		if (!pa || !pb || a === b) return;
+		this.mutate(() => {
+			pages[a] = pb;
+			pages[b] = pa;
+		});
+		this.undoNotice(`Swapped pages ${a + 1} and ${b + 1}.`);
+		this.afterPageMove([pa.id, pb.id]);
+	}
+
+	private movePage(from: number, to: number) {
+		const pages = this.doc.pages;
+		if (from === to || !pages[from]) return;
+		const moved = pages[from];
+		this.mutate(() => pages.splice(to, 0, pages.splice(from, 1)[0]));
+		this.undoNotice(`Moved page ${from + 1} to position ${to + 1}.`);
+		this.afterPageMove([moved.id]);
+	}
+
+	/** Briefly marks the pages that moved, and keeps the first one in view. */
+	private afterPageMove(ids: string[]) {
+		window.requestAnimationFrame(() => {
+			ids.forEach((id) => {
+				const el = this.scriptEl?.querySelector<HTMLElement>(`.st-sheet [data-id="${id}"]`);
+				if (el && this.motion) playOnce(el, "st-flash");
+				const item = this.navEl?.querySelector<HTMLElement>(`.st-nav-item[data-page="${id}"]`);
+				if (item && this.motion) playOnce(item, "st-nav-flash");
+			});
+		});
+	}
+
+	private setNavCollapsed(collapsed: boolean) {
+		this.plugin.settings.pageNavCollapsed = collapsed;
+		this.navEl?.parentElement?.toggleClass("st-nav-collapsed", collapsed);
+		this.renderNav();
+		this.plugin.saveSettings({ from: this, scope: "none" });
+		window.requestAnimationFrame(() => this.queueLayout());
+	}
+
+	/** First line of the page's first description, without formatting markers. */
+	private pageSnippet(page: Page): string {
+		for (const panel of page.panels) {
+			for (const b of panel.blocks) {
+				const text = parseInline(b.text)
+					.filter((x) => !x.marker)
+					.map((x) => x.text)
+					.join("")
+					.replace(/\s+/g, " ")
+					.trim();
+				if (text) return text.slice(0, 120);
+			}
+		}
+		return "";
+	}
+
+	/** Scrolls a page to the top of the script (smoothly unless motion is off) and marks it current. */
+	private navTo(pageId: string) {
+		const el = this.scriptEl?.querySelector<HTMLElement>(`.st-sheet [data-id="${pageId}"]`);
+		if (!el) return;
+		const target = this.readMode ? el.closest<HTMLElement>(".st-read-sheet") ?? el : el;
+		const top = this.scriptEl.getBoundingClientRect().top;
+		const offset = this.readMode && target !== el ? 12 : 24;
+		const delta = target.getBoundingClientRect().top - top - offset;
+		// Long jumps are instant (gliding past 20 pages is just slow); short hops glide.
+		const far = Math.abs(delta) > this.scriptEl.clientHeight * 2;
+		this.navLockUntil = Date.now() + (far || !this.motion ? 120 : 700);
+		this.scriptEl.scrollTo({ top: this.scriptEl.scrollTop + delta, behavior: this.motion && !far ? "smooth" : "auto" });
+		this.setNavActive(pageId);
+		if (this.motion) playOnce(el, "st-flash");
+	}
+
+	private stepPage(dir: -1 | 1) {
+		const pages = this.doc.pages;
+		const i = pages.findIndex((p) => p.id === this.navActiveId);
+		const next = pages[Math.max(0, Math.min(pages.length - 1, (i < 0 ? 0 : i) + dir))];
+		if (next) this.navTo(next.id);
+	}
+
+	private queueNavSpy() {
+		// While a jump is scrolling, keep the destination highlighted instead of every page passed.
+		if (Date.now() < this.navLockUntil) return;
+		if (this.navSpyQueued) return;
+		this.navSpyQueued = true;
+		window.requestAnimationFrame(() => {
+			this.navSpyQueued = false;
+			this.updateNavActive();
+		});
+	}
+
+	private queueNavRefresh() {
+		if (this.navRefreshTimer !== null) window.clearTimeout(this.navRefreshTimer);
+		this.navRefreshTimer = window.setTimeout(() => {
+			this.navRefreshTimer = null;
+			// Don't rebuild under the user's fingers while they type in the go-to box.
+			if (this.navEl && !this.navEl.contains(document.activeElement)) this.renderNav();
+		}, 700);
+	}
+
+	/** Highlights the page at the top third of the script ("you are here"). */
+	private updateNavActive() {
+		if (!this.scriptEl || !this.navEl) return;
+		const pages = Array.from(this.scriptEl.querySelectorAll<HTMLElement>(".st-sheet .st-page, .st-sheet .st-r-page"));
+		if (!pages.length) return;
+		const view = this.scriptEl.getBoundingClientRect();
+		const line = view.top + view.height * 0.3;
+		let current = pages[0].dataset.id!;
+		for (const p of pages) {
+			if (p.getBoundingClientRect().top <= line) current = p.dataset.id!;
+			else break;
+		}
+		// At the very bottom, the last page is current even if it's short.
+		if (this.scriptEl.scrollTop + this.scriptEl.clientHeight >= this.scriptEl.scrollHeight - 2) current = pages[pages.length - 1].dataset.id!;
+		this.setNavActive(current);
+	}
+
+	private setNavActive(pageId: string) {
+		if (!this.navEl || this.navActiveId === pageId) return;
+		this.navActiveId = pageId;
+		this.navEl.querySelectorAll(".st-nav-item.is-active").forEach((x) => x.removeClass("is-active"));
+		const item = this.navEl.querySelector<HTMLElement>(`.st-nav-item[data-page="${pageId}"]`);
+		if (!item) return;
+		item.addClass("is-active");
+		item.setAttr("aria-current", "page");
+		item.scrollIntoView({ block: "nearest" });
+	}
+
 	toggleReadMode() {
 		this.setReadMode(!this.readMode);
 	}
@@ -420,6 +697,11 @@ export class ComicView extends TextFileView {
 						const row = panelEl.createDiv({ cls: "st-r-p st-r-dialogue", attr: { "data-id": b.id } });
 						row.createDiv({ cls: "st-r-who", text: `${n !== undefined ? n + ". " : ""}${speaker}${mod}:` });
 						this.readInline(row.createDiv("st-r-line"), b.text);
+					} else if (type.style === "freestyle") {
+						if (!b.text.trim()) continue;
+						const p = panelEl.createDiv({ cls: "st-r-p", attr: { "data-id": b.id } });
+						this.applyFreeClasses(p, freeFormat(b));
+						this.readInline(p, b.text);
 					} else if (b.text.trim()) {
 						this.readInline(panelEl.createDiv({ cls: "st-r-p", attr: { "data-id": b.id } }), b.text);
 					}
@@ -459,6 +741,10 @@ export class ComicView extends TextFileView {
 
 	private onKeydown(e: KeyboardEvent) {
 		const mod = e.ctrlKey || e.metaKey;
+		if (e.altKey && !mod && (e.key === "PageUp" || e.key === "PageDown")) {
+			e.preventDefault();
+			return this.stepPage(e.key === "PageUp" ? -1 : 1);
+		}
 		// "?" opens help, as in most apps, unless you're typing.
 		const typing = (e.target as HTMLElement).closest("input, textarea, select, [contenteditable]");
 		if (e.key === "?" && !mod && !e.altKey && !typing) {
@@ -492,6 +778,9 @@ export class ComicView extends TextFileView {
 	renderAll() {
 		const root = this.contentEl;
 		const scrollTop = this.scriptEl?.scrollTop ?? 0;
+		// Rebuilding removes the focused field; keep keyboard focus in this view so
+		// shortcuts (Ctrl+Z, Ctrl+E, ?) keep working without an extra click.
+		const hadFocus = root.contains(document.activeElement);
 		root.empty();
 		this.panelCountEls.clear();
 		this.marginEl = null;
@@ -514,13 +803,22 @@ export class ComicView extends TextFileView {
 		body.toggleClass("st-no-palette", reading || !this.paletteOpen);
 		body.toggleClass("st-no-side", reading || !this.sideOpen);
 		body.style.setProperty("--st-palette-w", this.plugin.settings.paletteWidth + "px");
+		body.toggleClass("st-nav-collapsed", this.plugin.settings.pageNavCollapsed);
 		this.paletteEl = body.createDiv("st-palette");
 		this.wirePaletteDrop(this.paletteEl);
+		this.navEl = body.createDiv({ cls: "st-nav", attr: { role: "navigation", "aria-label": "Pages" } });
 		if (this.paletteOpen && !reading) this.makeResizer(body);
 		this.scriptEl = body.createDiv("st-script");
 		this.wireScriptDrop(this.scriptEl);
 		this.wireFieldKeys(this.scriptEl);
-		this.scriptEl.addEventListener("scroll", () => this.hideFormatBar(), { passive: true });
+		this.scriptEl.addEventListener(
+			"scroll",
+			() => {
+				this.hideFormatBar();
+				this.queueNavSpy();
+			},
+			{ passive: true }
+		);
 		this.sideEl = body.createDiv("st-side");
 
 		// Always-visible help, bottom-right, in both modes.
@@ -538,6 +836,7 @@ export class ComicView extends TextFileView {
 			this.renderScript();
 			this.renderSide();
 		}
+		this.renderNav();
 		this.scriptEl.scrollTop = scrollTop;
 		this.updateStats();
 		// Size text areas now (batched) so items are measured at their real height.
@@ -559,6 +858,7 @@ export class ComicView extends TextFileView {
 				this.focusSelector = null;
 				this.focusCaret = null;
 			}
+			if (hadFocus && !root.contains(document.activeElement)) root.focus({ preventScroll: true });
 			if (this.draftTarget) this.marginEl?.querySelector<HTMLTextAreaElement>(".st-comment-draft textarea")?.focus();
 			else if (this.editingNote) this.marginEl?.querySelector<HTMLTextAreaElement>(".st-comment.is-editing textarea")?.focus();
 		});
@@ -577,6 +877,7 @@ export class ComicView extends TextFileView {
 		this.refreshSpeakers();
 		this.renderScript();
 		this.renderSide();
+		this.renderNav();
 		this.updateStats();
 		this.scriptEl.scrollTop = scrollTop;
 		this.shownItems = new Set(Array.from(this.scriptEl.querySelectorAll<HTMLElement>(".st-sheet [data-id]"), (el) => el.dataset.id!));
@@ -722,6 +1023,7 @@ export class ComicView extends TextFileView {
 	}
 
 	private updateStats() {
+		this.queueNavRefresh();
 		if (!this.statsEl) return;
 		let panels = 0;
 		let words = 0;
@@ -1022,6 +1324,7 @@ export class ComicView extends TextFileView {
 		const layout = row.createEl("select", { cls: "dropdown st-pal-select", attr: { "aria-label": "Layout" } });
 		layout.createEl("option", { text: "Description", attr: { value: "description" } });
 		layout.createEl("option", { text: "Lettering", attr: { value: "lettering" } });
+		layout.createEl("option", { text: "Freestyle", attr: { value: "freestyle" } });
 		layout.value = type.style;
 		layout.addEventListener("change", () => {
 			type.style = layout.value as BlockType["style"];
@@ -1383,6 +1686,11 @@ export class ComicView extends TextFileView {
 			}
 			label.createSpan({ cls: "st-colon", text: ":" });
 			ta = this.richText(line, "st-text" + (type.fixedSpeaker ? " st-focus-first" : ""), type.name + "…");
+		} else if (type.style === "freestyle") {
+			const f = freeFormat(block);
+			this.applyFreeClasses(line, f);
+			ta = this.richText(line, "st-text st-focus-first", "Freestyle: anything goes (title cards, notes, lists…)");
+			if (!locked) this.freeToolbar(el, block, f);
 		} else {
 			if (panelLabelEl) {
 				line.appendChild(panelLabelEl);
@@ -1422,6 +1730,48 @@ export class ComicView extends TextFileView {
 				this.applyFormat(ta, marker);
 			}
 		});
+	}
+
+	// ---------------------------------------------------------------- freestyle blocks
+
+	private applyFreeClasses(el: HTMLElement, f: FreeFormat) {
+		el.addClass("st-free", `st-free-${f.align}`, `st-free-${f.size}`);
+		el.toggleClass("st-free-indent", f.indent);
+		el.toggleClass("st-free-box", f.box);
+	}
+
+	/** Changes a freestyle block's layout (undoable) and keeps the cursor in it. */
+	private setFree(block: Block, change: Partial<FreeFormat>) {
+		const active = document.activeElement as HTMLTextAreaElement | null;
+		const keepCaret = active?.closest?.(`[data-id="${block.id}"]`) ? active.selectionStart : null;
+		this.focusAfterRender = block.id;
+		this.focusSelector = "textarea.st-text";
+		this.focusCaret = keepCaret;
+		this.mutate(() => (block.format = { ...freeFormat(block), ...change }));
+	}
+
+	/** Small toolbar shown above a freestyle block while it's focused or hovered. */
+	private freeToolbar(el: HTMLElement, block: Block, f: FreeFormat) {
+		const bar = el.createDiv({ cls: "st-free-bar", attr: { role: "toolbar", "aria-label": "Freestyle format" } });
+		const btn = (icon: string, fallback: string, label: string, active: boolean, change: Partial<FreeFormat>) => {
+			const b = bar.createEl("button", { cls: "st-free-btn" + (active ? " is-active" : ""), attr: { "aria-label": label, "aria-pressed": String(active) } });
+			setIcon(b, icon);
+			// Icon sets differ between Obsidian versions: never leave a blank button.
+			if (!b.querySelector("svg")) b.setText(fallback);
+			b.addEventListener("mousedown", (e) => e.preventDefault()); // keep the cursor in the text
+			b.addEventListener("click", () => this.setFree(block, change));
+		};
+		btn("align-left", "←", "Align left", f.align === "left", { align: "left" });
+		btn("align-center", "↔", "Centre", f.align === "center", { align: "center" });
+		btn("align-right", "→", "Align right", f.align === "right", { align: "right" });
+		bar.createDiv("st-free-sep");
+		btn("indent", "⇥", "Indent to dialogue column", f.indent, { indent: !f.indent });
+		btn("square", "□", "Box around it", f.box, { box: !f.box });
+		bar.createDiv("st-free-sep");
+		const order: FreeFormat["size"][] = ["small", "normal", "large"];
+		const i = order.indexOf(f.size);
+		btn("a-arrow-down", "A−", "Smaller text", false, { size: order[Math.max(0, i - 1)] });
+		btn("a-arrow-up", "A+", "Larger text", false, { size: order[Math.min(order.length - 1, i + 1)] });
 	}
 
 	/** Ctrl+B / Ctrl+I / Ctrl+U / Ctrl+Shift+H → the marker to toggle. */
@@ -1832,6 +2182,10 @@ export class ComicView extends TextFileView {
 			const page = ref.page;
 			if (!locked) menu.addItem((i) => i.setTitle("Add panel").setIcon("plus").onClick(() => this.mutate(() => page.panels.push(newPanel(settings)))));
 			menu.addItem((i) => i.setTitle("Insert page after").setIcon("file-plus").onClick(() => this.mutate(() => this.doc.pages.splice(ref.pageIndex + 1, 0, newPage(settings)))));
+			if (this.doc.pages.length > 1) {
+				menu.addItem((i) => i.setTitle("Swap with page\u2026").setIcon("arrow-left-right").onClick(() => this.pickPage(page.id, "swap")));
+				menu.addItem((i) => i.setTitle("Move to position\u2026").setIcon("move-vertical").onClick(() => this.pickPage(page.id, "move")));
+			}
 			menu.addItem((i) => i.setTitle("Collapse all panels").setIcon("chevrons-down-up").onClick(() => this.mutate(() => page.panels.forEach((p) => (p.collapsed = true)))));
 			menu.addItem((i) => i.setTitle("Expand all panels").setIcon("chevrons-up-down").onClick(() => this.mutate(() => page.panels.forEach((p) => (p.collapsed = false)))));
 		} else if (ref.kind === "panel") {
@@ -1854,6 +2208,19 @@ export class ComicView extends TextFileView {
 			if (!containerLocked) {
 				this.submenu(menu, "Insert below", "plus", (m) => {
 					for (const t of settings.blockTypes) m.addItem((s) => s.setTitle(t.name).onClick(() => this.insertBlockAt(ref.panel!, ref.blockIndex! + 1, newBlock(t))));
+				});
+			}
+			if (!locked && findType(settings, block.typeId).style === "freestyle") {
+				const f = freeFormat(block);
+				this.submenu(menu, "Freestyle format", "type", (m) => {
+					for (const [align, label] of [["left", "Align left"], ["center", "Centre"], ["right", "Align right"]] as const) {
+						m.addItem((i) => i.setTitle(label).setChecked(f.align === align).onClick(() => this.setFree(block, { align })));
+					}
+					m.addItem((i) => i.setTitle("Indent to dialogue column").setChecked(f.indent).onClick(() => this.setFree(block, { indent: !f.indent })));
+					for (const [size, label] of [["small", "Small text"], ["normal", "Normal text"], ["large", "Large text"]] as const) {
+						m.addItem((i) => i.setTitle(label).setChecked(f.size === size).onClick(() => this.setFree(block, { size })));
+					}
+					m.addItem((i) => i.setTitle("Box around it").setChecked(f.box).onClick(() => this.setFree(block, { box: !f.box })));
 				});
 			}
 			menu.addItem((i) => i.setTitle("Save as reusable block").setIcon("bookmark-plus").onClick(() => this.saveAsPreset(block)));
@@ -2125,6 +2492,7 @@ export class ComicView extends TextFileView {
 		if (editing) {
 			const input = card.createEl("textarea", { cls: "st-comment-input", attr: { rows: "3" } });
 			input.value = note.text;
+			const suggest = new LinkSuggest(this.app, input, card, () => this.file?.path ?? "");
 			const save = () => {
 				const text = input.value.trim();
 				this.editingNote = null;
@@ -2135,15 +2503,15 @@ export class ComicView extends TextFileView {
 				this.editingNote = null;
 				this.renderAll();
 			};
-			this.commentButtons(card, "Save", save, cancel);
+			this.commentButtons(card, "Save", save, cancel, suggest);
 			this.commentKeys(input, save, cancel);
 		} else {
-			card.createDiv({ cls: "st-comment-text", text: note.text });
+			renderLinked(card.createDiv("st-comment-text"), note.text, this.app, this.file?.path ?? "", this);
 		}
 
 		card.createDiv({ cls: "st-comment-loc", text: describeRef(ref, this.plugin.settings) });
 		card.addEventListener("click", (e) => {
-			if ((e.target as HTMLElement).closest("button, textarea")) return;
+			if ((e.target as HTMLElement).closest("button, textarea, a")) return;
 			this.setActiveNote(note.id);
 			this.jumpTo(ref.item.id);
 		});
@@ -2155,7 +2523,8 @@ export class ComicView extends TextFileView {
 		const author = this.plugin.settings.authorName;
 		top.createDiv({ cls: "st-avatar", text: author.slice(0, 1).toUpperCase() });
 		top.createDiv({ cls: "st-comment-author", text: author });
-		const input = card.createEl("textarea", { cls: "st-comment-input", attr: { rows: "3", placeholder: "Add a note or comment…" } });
+		const input = card.createEl("textarea", { cls: "st-comment-input", attr: { rows: "3", placeholder: "Add a note or comment… type [[ to link a note" } });
+		const suggest = new LinkSuggest(this.app, input, card, () => this.file?.path ?? "");
 		const submit = () => {
 			const text = input.value.trim();
 			if (!text) return;
@@ -2168,13 +2537,19 @@ export class ComicView extends TextFileView {
 			this.draftTarget = null;
 			this.renderAll();
 		};
-		this.commentButtons(card, "Comment", submit, cancel);
+		this.commentButtons(card, "Comment", submit, cancel, suggest);
 		this.commentKeys(input, submit, cancel);
 		card.createDiv({ cls: "st-comment-loc", text: describeRef(ref, this.plugin.settings) });
 	}
 
-	private commentButtons(card: HTMLElement, label: string, ok: () => void, cancel: () => void) {
+	private commentButtons(card: HTMLElement, label: string, ok: () => void, cancel: () => void, suggest?: LinkSuggest) {
 		const row = card.createDiv("st-comment-buttons");
+		if (suggest) {
+			const link = row.createEl("button", { cls: "st-comment-link-btn", attr: { "aria-label": "Link to a note ([[)" } });
+			setIcon(link, "link");
+			link.addEventListener("mousedown", (e) => e.preventDefault()); // keep the cursor where it is
+			link.addEventListener("click", () => suggest.begin());
+		}
 		row.createEl("button", { text: "Cancel" }).addEventListener("click", cancel);
 		row.createEl("button", { cls: "mod-cta", text: label }).addEventListener("click", ok);
 	}

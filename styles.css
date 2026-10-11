@@ -130,19 +130,24 @@
 /* ---------- three-column body ---------- */
 .st-body {
 	--st-palette-w: 200px;
+	--st-nav-w: 216px;
+	--st-pal-col: var(--st-palette-w);
+	--st-side-col: 280px;
 	flex: 1 1 auto;
 	min-height: 0;
 	position: relative;
 	display: grid;
-	grid-template-columns: var(--st-palette-w) minmax(0, 1fr) 280px;
+	/* palette | pages | script | pinned & revisions */
+	grid-template-columns: var(--st-pal-col) var(--st-nav-w) minmax(0, 1fr) var(--st-side-col);
 }
-.st-body.st-no-palette { grid-template-columns: 0 minmax(0, 1fr) 280px; }
-.st-body.st-no-side { grid-template-columns: var(--st-palette-w) minmax(0, 1fr) 0; }
-.st-body.st-no-palette.st-no-side { grid-template-columns: 0 minmax(0, 1fr) 0; }
+.st-body.st-no-palette { --st-pal-col: 0px; }
+.st-body.st-no-side { --st-side-col: 0px; }
+.st-body.st-nav-collapsed { --st-nav-w: 48px; }
 /* Pin each column: a hidden column must not let the script slide into its zero-width slot. */
 .st-palette { grid-column: 1; grid-row: 1; }
-.st-script { grid-column: 2; grid-row: 1; }
-.st-side { grid-column: 3; grid-row: 1; }
+.st-nav { grid-column: 2; grid-row: 1; }
+.st-script { grid-column: 3; grid-row: 1; }
+.st-side { grid-column: 4; grid-row: 1; }
 .st-no-palette .st-palette, .st-no-side .st-side { display: none; }
 
 .st-palette-resizer {
@@ -743,8 +748,12 @@
 
 /* narrow panes: palette and pinned panel float over the script; the paper tightens up */
 @container (max-width: 900px) {
-	.st-body, .st-body.st-no-palette, .st-body.st-no-side { grid-template-columns: minmax(0, 1fr); }
-	.st-script { grid-column: 1; }
+	/* narrow: the pages list stays as a slim rail of numbers */
+	.st-body, .st-body.st-no-palette, .st-body.st-no-side { grid-template-columns: 48px minmax(0, 1fr); }
+	.st-nav { grid-column: 1; }
+	.st-script { grid-column: 2; }
+	.st-nav .st-nav-detail, .st-nav .st-nav-title, .st-nav .st-nav-goto, .st-nav .st-nav-count, .st-nav .st-nav-add { display: none; }
+	.st-nav .st-nav-item { justify-content: center; padding: 6px 0; }
 	.st-palette, .st-side { position: absolute; top: 0; bottom: 0; z-index: 5; box-shadow: var(--shadow-l); }
 	.st-palette { left: 0; width: var(--st-palette-w); }
 	.st-side { right: 0; width: min(300px, 85%); }
@@ -1034,3 +1043,248 @@
 .st-help-tip:last-child { border-bottom: none; }
 .st-help-body h4 { margin: 18px 0 6px; font-size: var(--font-ui-small); text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
 .st-help-body h4:first-child { margin-top: 0; }
+
+/* ===================================================================
+   Pages panel: jump between pages, see status, drag to reorder.
+   Collapses to a rail of page numbers.
+   =================================================================== */
+.st-nav {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	background: var(--background-secondary);
+	border-right: 1px solid var(--background-modifier-border);
+	font-size: var(--font-ui-small);
+	overflow: hidden;
+}
+.st-nav-head {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 6px 6px 6px 8px;
+	border-bottom: 1px solid var(--background-modifier-border);
+	flex: 0 0 auto;
+}
+.st-nav-title { font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; font-size: var(--font-ui-smaller); color: var(--text-muted); }
+.st-nav-count { font-size: 10px; color: var(--text-faint); margin-right: auto; }
+.st-root button.st-nav-toggle { margin-left: auto; }
+.st-nav-collapsed .st-nav-head { justify-content: center; padding: 6px 0; }
+.st-nav-collapsed .st-root button.st-nav-toggle, .st-nav-collapsed button.st-nav-toggle { margin: 0; }
+.st-root input.st-nav-goto {
+	width: 100%;
+	margin: 6px 8px 2px;
+	width: calc(100% - 16px);
+	font-size: var(--font-ui-smaller);
+	padding: 3px 8px;
+	height: auto;
+	flex: 0 0 auto;
+}
+.st-nav-list { flex: 1 1 auto; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.st-nav-item {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 6px;
+	border-radius: 6px;
+	cursor: pointer;
+	border: 1px solid transparent;
+	transition: background-color 120ms, border-color 120ms;
+	user-select: none;
+}
+.st-nav-item:hover { background: var(--background-modifier-hover); }
+.st-nav-item.is-active { background: var(--background-primary); border-color: var(--interactive-accent); }
+.st-nav-item:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
+.st-nav-item.is-dragging { opacity: 0.4; }
+.st-nav-num {
+	position: relative;
+	flex: 0 0 auto;
+	min-width: 26px;
+	height: 26px;
+	padding: 0 4px;
+	border-radius: 6px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	background: var(--background-modifier-hover);
+	color: var(--text-muted);
+}
+.st-nav-item.is-active .st-nav-num { background: var(--interactive-accent); color: var(--text-on-accent, #fff); }
+/* status dots on the number: red = needs revision, amber = open comments */
+.st-nav-num.has-revision::after,
+.st-nav-num.has-notes::before {
+	content: "";
+	position: absolute;
+	top: -2px;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	border: 2px solid var(--background-secondary);
+}
+.st-nav-num.has-revision::after { right: -3px; background: #d93025; }
+.st-nav-num.has-notes::before { left: -3px; background: #f9ab00; }
+.st-nav-detail { min-width: 0; flex: 1 1 auto; }
+.st-nav-label { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: var(--font-ui-smaller); color: var(--text-normal); }
+.st-nav-label .st-nav-meta { font-weight: normal; color: var(--text-faint); }
+.st-nav-flags { display: inline-flex; gap: 2px; margin-left: auto; color: var(--text-faint); }
+.st-nav-flags svg { width: 11px; height: 11px; }
+.st-nav-snippet {
+	margin-top: 2px;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	line-height: 1.35;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+	word-break: break-word;
+}
+.st-nav-snippet.is-empty { font-style: italic; color: var(--text-faint); }
+.st-nav-collapsed .st-nav-item { justify-content: center; padding: 3px 0; }
+.st-nav-collapsed .st-nav-list { padding: 6px 4px; }
+.st-root button.st-nav-add {
+	margin: 4px 6px 8px;
+	font-size: var(--font-ui-smaller);
+	flex: 0 0 auto;
+}
+.st-drop-indicator[data-kind="nav"] { margin: 0; }
+
+/* ===================================================================
+   Page picker ("Swap with page…", "Move to position…")
+   =================================================================== */
+.st-picker-modal { width: min(520px, 92vw); }
+.st-picker-modal input.st-picker-input { width: 100%; margin-bottom: 10px; }
+.st-picker-list { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.st-picker-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 6px 8px;
+	border-radius: 6px;
+	cursor: pointer;
+}
+.st-picker-row.is-selected { background: var(--background-modifier-hover); box-shadow: inset 3px 0 0 var(--interactive-accent); }
+.st-picker-row.is-disabled { opacity: 0.45; cursor: default; }
+.st-picker-num {
+	flex: 0 0 auto;
+	min-width: 28px;
+	height: 28px;
+	border-radius: 6px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	background: var(--background-modifier-hover);
+}
+.st-picker-row.is-selected .st-picker-num { background: var(--interactive-accent); color: var(--text-on-accent, #fff); }
+.st-picker-text { min-width: 0; }
+.st-picker-label { font-weight: 600; font-size: var(--font-ui-small); }
+.st-picker-detail { font-size: var(--font-ui-smaller); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-picker-empty { padding: 12px; color: var(--text-faint); text-align: center; }
+.st-picker-hint { margin-top: 10px; font-size: var(--font-ui-smaller); color: var(--text-faint); }
+
+@keyframes st-nav-flash {
+	0% { box-shadow: 0 0 0 2px var(--interactive-accent); }
+	100% { box-shadow: 0 0 0 2px transparent; }
+}
+.st-nav-flash { animation: st-nav-flash 1s ease-out; }
+
+/* ===================================================================
+   Freestyle blocks: anything goes, with the block's own layout.
+   Classes sit on the editor line (text box + preview inherit them)
+   and on the Read-mode paragraph, so both look the same.
+   =================================================================== */
+.st-free-left .st-text, .st-free-left .st-text-mirror, .st-r-p.st-free-left { text-align: left; }
+.st-free-center .st-text, .st-free-center .st-text-mirror, .st-r-p.st-free-center { text-align: center; }
+.st-free-right .st-text, .st-free-right .st-text-mirror, .st-r-p.st-free-right { text-align: right; }
+.st-root .st-sheet .st-free-center textarea.st-text { text-align: center; }
+.st-root .st-sheet .st-free-right textarea.st-text { text-align: right; }
+.st-free-small { font-size: 0.83em; }
+.st-free-large { font-size: 1.33em; line-height: 1.25; }
+.st-free-indent { padding-left: 2in; }
+.st-free-box { border: 1px solid var(--st-sheet-fg); padding: 0.5em 0.75em; }
+.st-block-line.st-free-box { border-radius: 1px; }
+
+/* the formatting toolbar: appears above the block when you're in it */
+.st-free-bar {
+	position: absolute;
+	right: 0;
+	top: -34px;
+	z-index: 15;
+	display: none;
+	align-items: center;
+	gap: 1px;
+	padding: 3px;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+	font-family: var(--font-interface);
+}
+.st-block:focus-within > .st-free-bar { display: flex; animation: st-pop 120ms var(--st-ease); }
+.st-root button.st-free-btn {
+	width: 28px;
+	height: 26px;
+	padding: 0;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	background: none;
+	box-shadow: none;
+	border: none;
+	border-radius: 5px;
+	color: var(--text-muted);
+}
+.st-root button.st-free-btn:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.st-root button.st-free-btn.is-active { background: rgba(66, 133, 244, 0.18); color: var(--interactive-accent); }
+.st-free-btn svg { width: 15px; height: 15px; }
+.st-free-sep { width: 1px; height: 16px; background: var(--background-modifier-border); margin: 0 3px; }
+
+/* ===================================================================
+   [[Links]] in comments
+   =================================================================== */
+.st-comment-text a.st-note-link {
+	color: var(--st-accent);
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 2px;
+	cursor: pointer;
+	word-break: break-word;
+}
+.st-comment-text a.st-note-link:hover { text-decoration-thickness: 2px; }
+.st-comment-text a.st-note-link.is-unresolved { opacity: 0.6; text-decoration-style: dashed; }
+
+.st-comment-buttons { align-items: center; }
+.st-root .st-comment-buttons button.st-comment-link-btn {
+	margin-right: auto;
+	padding: 4px 8px;
+	background: none;
+	box-shadow: none;
+	border: 1px solid var(--st-card-border);
+	color: var(--st-sheet-muted);
+}
+.st-root .st-comment-buttons button.st-comment-link-btn:hover { color: var(--st-accent); border-color: var(--st-accent); }
+.st-comment-link-btn svg { width: 14px; height: 14px; }
+
+/* suggestion list under the comment box */
+.st-link-suggest {
+	position: absolute;
+	left: 12px;
+	right: 12px;
+	z-index: 40;
+	max-height: 240px;
+	overflow-y: auto;
+	padding: 4px;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+	font-size: 13px;
+	color: var(--text-normal);
+}
+.st-link-row { padding: 5px 8px; border-radius: 5px; cursor: pointer; }
+.st-link-row.is-selected { background: var(--background-modifier-hover); box-shadow: inset 3px 0 0 var(--interactive-accent); }
+.st-link-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-link-path { font-size: 11px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

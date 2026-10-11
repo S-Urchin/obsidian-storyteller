@@ -8,12 +8,14 @@ import {
 	Packer,
 	Paragraph,
 	ParagraphChild,
+	AlignmentType,
+	BorderStyle,
 	Tab,
 	TextRun,
 	UnderlineType,
 } from "docx";
-import { parseInline } from "./format";
-import { balloonNumbers, findType, pageLabel, panelLabel } from "./doc";
+import { linksToText, parseInline } from "./format";
+import { balloonNumbers, findType, freeFormat, pageLabel, panelLabel } from "./doc";
 import { Block, ComicDoc, HighlightColor, ItemMeta, StorytellerSettings } from "./types";
 
 /*
@@ -35,6 +37,8 @@ const HIGHLIGHT_MAP: Record<HighlightColor, (typeof DocxHighlight)[keyof typeof 
 };
 
 interface RunStyle {
+	/** Half-points; defaults to 12pt. */
+	size?: number;
 	bold?: boolean;
 	italics?: boolean;
 	underline?: boolean;
@@ -49,7 +53,7 @@ export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): 
 	const run = (text: string, style: RunStyle = {}) =>
 		new TextRun({
 			text,
-			size: SIZE,
+			size: style.size ?? SIZE,
 			bold: style.bold,
 			italics: style.italics,
 			underline: style.underline ? { type: UnderlineType.SINGLE } : undefined,
@@ -62,13 +66,14 @@ export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): 
 		for (const seg of parseInline(text)) {
 			if (seg.marker) continue;
 			const style: RunStyle = {
+				size: base.size,
 				bold: base.bold || seg.bold,
 				italics: base.italics || seg.italic,
 				underline: seg.underline,
 				highlight: seg.highlight ? base.highlight ?? "yellow" : base.highlight,
 			};
 			seg.text.split("\n").forEach((line, i) => {
-				if (i > 0) runs.push(new TextRun({ break: 1, size: SIZE }));
+				if (i > 0) runs.push(new TextRun({ break: 1, size: base.size ?? SIZE }));
 				if (line) runs.push(run(line, style));
 			});
 		}
@@ -91,7 +96,7 @@ export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): 
 				author,
 				initials: author.slice(0, 2).toUpperCase(),
 				date: new Date(note.created),
-				children: note.text.split("\n").map((line) => new Paragraph({ children: [new TextRun(line)] })),
+				children: linksToText(note.text).split("\n").map((line) => new Paragraph({ children: [new TextRun(line)] })),
 			});
 			out = [new CommentRangeStart(id), ...out, new CommentRangeEnd(id), new TextRun({ children: [new CommentReference(id)] })];
 		}
@@ -116,6 +121,20 @@ export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): 
 		});
 	};
 
+	/** Freestyle: the block's own alignment, indent, size and optional box. */
+	const freestyle = (block: Block): Paragraph => {
+		const f = freeFormat(block);
+		const size = f.size === "small" ? 20 : f.size === "large" ? 32 : SIZE;
+		const edge = { style: BorderStyle.SINGLE, size: 6, color: "auto", space: 6 };
+		return new Paragraph({
+			style: "ACTION",
+			alignment: f.align === "center" ? AlignmentType.CENTER : f.align === "right" ? AlignmentType.RIGHT : AlignmentType.LEFT,
+			indent: f.indent ? { left: TWO_INCHES } : undefined,
+			border: f.box ? { top: edge, bottom: edge, left: edge, right: edge } : undefined,
+			children: decorate(block, inlineRuns(block.text, { size, highlight: block.highlight })),
+		});
+	};
+
 	const body: Paragraph[] = [];
 	body.push(action([run(doc.title.toUpperCase(), { bold: true })]));
 	if (doc.byline.trim()) body.push(action([run(doc.byline.trim())]));
@@ -136,8 +155,11 @@ export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): 
 				body.push(action(decorate(panel, [label])));
 			}
 			for (const block of blocks) {
-				if (findType(settings, block.typeId).style === "lettering") body.push(lettering(block));
-				else if (block.text.trim() || block.notes.length || block.revision) {
+				const style = findType(settings, block.typeId).style;
+				if (style === "lettering") body.push(lettering(block));
+				else if (style === "freestyle") {
+					if (block.text.trim() || block.notes.length || block.revision) body.push(freestyle(block));
+				} else if (block.text.trim() || block.notes.length || block.revision) {
 					body.push(action(decorate(block, inlineRuns(block.text, { highlight: block.highlight }))));
 				}
 			}

@@ -133,3 +133,19 @@ export function toggleMarker(value: string, start: number, end: number, marker: 
 
 	return { from: s, to: e, insert: marker + sel + marker, selStart: s + L, selEnd: e + L };
 }
+
+// ---------------------------------------------------------------- [[wiki links]]
+
+export const LINK = /\[\[([^\[\]|#]*)(#[^\[\]|]*)?(?:\|([^\[\]]*))?\]\]/g;
+
+/** What a [[link]] shows as text: its alias, else the note name (plus " > heading"). */
+export function linkShown(path: string, hash: string | undefined, alias: string | undefined): string {
+	if (alias) return alias;
+	const name = path.split("/").pop() || path;
+	return hash ? `${name} > ${hash.slice(1)}` : name;
+}
+
+/** Plain text with links replaced by what they display (for the Word export). */
+export function linksToText(text: string): string {
+	return text.replace(LINK, (_m, path: string, hash?: string, alias?: string) => linkShown(path, hash, alias));
+}

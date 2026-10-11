@@ -10,6 +10,8 @@ import {
 	PageNumberStyle,
 	Panel,
 	StorytellerSettings,
+	DEFAULT_FREE_FORMAT,
+	FreeFormat,
 } from "./types";
 
 export function uid(): string {
@@ -214,4 +216,9 @@ export function describeRef(ref: ItemRef, settings: StorytellerSettings): string
 		parts.push(type.name + who);
 	}
 	return parts.join(" › ");
+}
+
+/** A freestyle block's layout, filled in with defaults. */
+export function freeFormat(block: Block): FreeFormat {
+	return { ...DEFAULT_FREE_FORMAT, ...(block.format ?? {}) };
 }
