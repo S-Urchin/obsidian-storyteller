@@ -40,6 +40,8 @@
 	--st-revise-fg: #ffffff;
 	--st-shadow: rgba(60, 64, 67, 0.3);
 	--st-shadow-soft: rgba(60, 64, 67, 0.15);
+	--st-sheet-edge: transparent;
+	--st-margin-bg: transparent;
 }
 .st-root.st-paper-light,
 .theme-light .st-root.st-paper-auto {
@@ -56,14 +58,17 @@
 
 .st-root.st-paper-dark,
 .theme-dark .st-root.st-paper-auto {
-	--st-sheet-bg: #202124;
-	--st-sheet-fg: #e8eaed;
-	--st-sheet-muted: #9aa0a6;
-	--st-sheet-rule: #3c4043;
-	--st-card-bg: #2d2e31;
-	--st-card-fg: #e8eaed;
-	--st-card-border: #44474a;
-	--st-desk: #131314;
+	/* Like Word's dark mode: black page and comment pane on a dark grey backdrop. */
+	--st-sheet-bg: #000000;
+	--st-sheet-fg: #f2f2f2;
+	--st-sheet-muted: #9a9a9a;
+	--st-sheet-rule: #3a3a3a;
+	--st-sheet-edge: #3a3a3a;
+	--st-card-bg: #000000;
+	--st-card-fg: #f2f2f2;
+	--st-card-border: #4a4a4a;
+	--st-margin-bg: #000000;
+	--st-desk: #262626;
 	--st-revise: #f28b82;
 	--st-revise-fg: #202124;
 	--st-accent: #8ab4f8;
@@ -310,7 +315,7 @@
 	font-size: var(--st-font-size);
 	line-height: var(--st-line);
 	padding: 0.75in;
-	box-shadow: 0 1px 3px var(--st-shadow), 0 4px 8px 3px var(--st-shadow-soft);
+	box-shadow: 0 0 0 1px var(--st-sheet-edge), 0 1px 3px var(--st-shadow), 0 4px 8px 3px var(--st-shadow-soft);
 	transition: background-color 250ms ease, color 250ms ease;
 }
 
@@ -550,6 +555,8 @@
 	align-self: stretch;
 	font-family: var(--font-interface);
 	font-size: 13px;
+	background: var(--st-margin-bg);
+	transition: background-color 250ms ease;
 }
 .st-margin.is-collapsed { flex-basis: 36px; }
 .st-margin-head {
@@ -748,3 +755,17 @@
 
 /* dropping onto a collapsed page, panel or palette section */
 .st-drop-target { outline: 2px dashed var(--interactive-accent); outline-offset: 2px; border-radius: 3px; }
+
+/* dark paper: the comment pane is a black column joined to the page, as in Word */
+.st-root.st-paper-dark .st-canvas,
+.theme-dark .st-root.st-paper-auto .st-canvas { gap: 0; }
+.st-root.st-paper-dark .st-margin,
+.theme-dark .st-root.st-paper-auto .st-margin {
+	padding: 0 12px 12px 18px;
+	border-left: 1px solid var(--st-sheet-rule);
+	box-shadow: 0 0 0 1px var(--st-sheet-edge);
+}
+.st-root.st-paper-dark .st-margin.is-collapsed,
+.theme-dark .st-root.st-paper-auto .st-margin.is-collapsed { padding: 0 4px; }
+.st-root.st-paper-dark .st-margin-head,
+.theme-dark .st-root.st-paper-auto .st-margin-head { color: var(--st-sheet-muted); padding-top: 8px; }
