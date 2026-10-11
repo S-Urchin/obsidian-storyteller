@@ -136,7 +136,7 @@ export function toggleMarker(value: string, start: number, end: number, marker: 
 
 // ---------------------------------------------------------------- [[wiki links]]
 
-export const LINK = /\[\[([^\[\]|#]*)(#[^\[\]|]*)?(?:\|([^\[\]]*))?\]\]/g;
+export const LINK = /\[\[([^[\]|#]*)(#[^[\]|]*)?(?:\|([^[\]]*))?\]\]/g;
 
 /** What a [[link]] shows as text: its alias, else the note name (plus " > heading"). */
 export function linkShown(path: string, hash: string | undefined, alias: string | undefined): string {

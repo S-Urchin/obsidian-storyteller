@@ -25,12 +25,12 @@
 	--st-hl-orange: rgba(255, 149, 0, 0.26);
 	--st-comment-tint: rgba(251, 188, 4, 0.12);
 	--st-comment-active: rgba(251, 188, 4, 0.34);
-	padding: 0 !important;
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
 	container-type: inline-size;
 }
+.view-content.st-root { padding: 0; }
 
 /* Paper colours. "Auto" follows Obsidian's light/dark theme live; Light and Dark are fixed. */
 .st-root {
@@ -325,7 +325,21 @@
 	transition: background-color 250ms ease, color 250ms ease;
 }
 
-/* Text fields on the paper look like plain typed text in every state: no hover/focus fill or border. */
+/* Text fields on the paper look like plain typed text in every state: no hover/focus fill or border.
+   These selectors outrank Obsidian's own input/textarea styles, so no !important is needed. */
+.st-root .st-sheet input[type="text"],
+.st-root .st-sheet textarea {
+	font-family: inherit;
+	font-size: inherit;
+	font-weight: inherit;
+	line-height: inherit;
+	letter-spacing: normal;
+	padding: 0;
+	margin: 0;
+	height: auto;
+	min-height: 0;
+	caret-color: var(--st-sheet-fg);
+}
 .st-root .st-sheet input[type="text"],
 .st-root .st-sheet input[type="text"]:hover,
 .st-root .st-sheet input[type="text"]:focus,
@@ -336,28 +350,18 @@
 .st-root .st-sheet textarea:focus,
 .st-root .st-sheet textarea:focus-visible,
 .st-root .st-sheet textarea:active {
-	font-family: inherit;
-	font-size: inherit;
-	font-weight: inherit;
-	line-height: inherit;
-	letter-spacing: normal;
-	color: inherit !important;
-	background: transparent !important;
-	border: none !important;
-	border-radius: 0 !important;
-	box-shadow: none !important;
-	outline: none !important;
-	padding: 0;
-	margin: 0;
-	height: auto;
-	min-height: 0;
-	caret-color: var(--st-sheet-fg);
+	color: inherit;
+	background: transparent;
+	border: none;
+	border-radius: 0;
+	box-shadow: none;
+	outline: none;
 }
-.st-sheet ::placeholder { color: var(--st-sheet-muted) !important; opacity: 0.6; }
+.st-root .st-sheet ::placeholder { color: var(--st-sheet-muted); opacity: 0.6; }
 .st-sheet input[readonly], .st-sheet textarea[readonly] { cursor: default; }
 
-.st-title { display: block; width: 100%; font-weight: bold !important; text-transform: uppercase; }
-.st-byline { display: block; width: 100%; margin-top: 1em !important; }
+.st-root .st-sheet input.st-title { display: block; width: 100%; font-weight: bold; text-transform: uppercase; }
+.st-root .st-sheet input.st-byline { display: block; width: 100%; margin-top: 1em; }
 
 /* one blank line (12pt) before every paragraph, as in the template */
 .st-page-head, .st-panel-line, .st-block { margin-top: 1em; }
@@ -381,12 +385,13 @@
 	transition: background 0.2s, opacity 0.15s;
 }
 .st-item.has-comments { background: var(--st-comment-tint); }
-.st-hl-yellow { background: var(--st-hl-yellow) !important; }
-.st-hl-green { background: var(--st-hl-green) !important; }
-.st-hl-blue { background: var(--st-hl-blue) !important; }
-.st-hl-pink { background: var(--st-hl-pink) !important; }
-.st-hl-orange { background: var(--st-hl-orange) !important; }
-.st-item.st-comment-anchor { background: var(--st-comment-active) !important; }
+/* after .has-comments, same specificity: a highlight wins over the comment tint */
+.st-item.st-hl-yellow, .st-card.st-hl-yellow { background: var(--st-hl-yellow); }
+.st-item.st-hl-green, .st-card.st-hl-green { background: var(--st-hl-green); }
+.st-item.st-hl-blue, .st-card.st-hl-blue { background: var(--st-hl-blue); }
+.st-item.st-hl-pink, .st-card.st-hl-pink { background: var(--st-hl-pink); }
+.st-item.st-hl-orange, .st-card.st-hl-orange { background: var(--st-hl-orange); }
+.st-root .st-item.st-comment-anchor { background: var(--st-comment-active); }
 .st-item.is-revision { box-shadow: -3px 0 0 var(--st-revise); }
 .st-item.st-flash { animation: st-flash 1.2s ease-out; }
 @keyframes st-flash {
@@ -421,15 +426,16 @@
 .st-item:hover > .st-gutter .st-handle,
 .st-item:hover > .st-page-head .st-handle,
 .st-item:focus-within > .st-gutter .st-handle { opacity: 0.55; }
-.st-handle:hover { opacity: 1 !important; }
+.st-root .st-item .st-handle:hover { opacity: 1; }
 .st-root button.st-collapse { opacity: 0; padding: 0; }
 .st-root button.st-collapse.is-collapsed,
 .st-item:hover > .st-gutter button.st-collapse,
 .st-item:hover > .st-page-head button.st-collapse { opacity: 0.6; }
-.st-collapse svg { width: 16px !important; height: 16px !important; }
+.st-root button.st-collapse svg { width: 16px; height: 16px; }
 
-.st-hover-only { opacity: 0 !important; margin-left: 8px; }
-.st-item:hover > .st-page-head .st-hover-only { opacity: 0.7 !important; }
+.st-root button.st-hover-only { opacity: 0; margin-left: 8px; }
+.st-root .st-item:hover > .st-page-head button.st-hover-only { opacity: 0.7; }
+.st-root .st-item:hover > .st-page-head button.st-hover-only:hover { opacity: 1; }
 
 /* status badges sit in the right margin of the paper */
 .st-side-badges { position: absolute; left: calc(100% + 6px); top: 0; height: calc(var(--st-line) * 1em); display: flex; align-items: center; }
@@ -488,7 +494,7 @@
 }
 .st-block:hover::before, .st-block:focus-within::before { opacity: 0.8; }
 
-.st-text { display: block; width: 100%; resize: none !important; overflow: hidden; }
+.st-root .st-sheet textarea.st-text { display: block; width: 100%; resize: none; overflow: hidden; }
 
 /* description: "Panel 1:" runs into the text; wrapped lines return to the margin */
 .st-block-line.has-panel-label { position: relative; }
@@ -504,7 +510,7 @@
 .st-balloon-num { white-space: pre; }
 .st-root .st-sheet input.st-speaker { flex: 0 0 auto; min-width: 1ch; }
 /* the autocomplete list adds a dropdown arrow that would eat into the name */
-.st-root .st-sheet input.st-speaker::-webkit-calendar-picker-indicator { display: none !important; }
+.st-root .st-sheet input.st-speaker::-webkit-calendar-picker-indicator { display: none; }
 .st-colon { white-space: pre; }
 
 /* ---------- add buttons ---------- */
@@ -699,7 +705,7 @@
 .st-card-enter { animation: st-card-enter 220ms var(--st-ease) both; }
 
 /* moved items glide from where they were (FLIP) */
-.st-flip { transition: transform 220ms var(--st-ease) !important; }
+.st-item.st-flip { transition: transform 220ms var(--st-ease); }
 
 @keyframes st-exit {
 	to { opacity: 0; transform: scale(0.97); }
@@ -735,11 +741,24 @@
 .st-notice-link { cursor: pointer; }
 
 @media (prefers-reduced-motion: reduce) {
-	.st-root *, .st-root *::before, .st-root *::after {
-		animation: none !important;
-		transition: none !important;
-	}
+	.st-root .st-item.st-flash,
+	.st-root .st-drop-indicator,
+	.st-root .st-format-bar.is-visible,
+	.st-root .st-block:focus-within > .st-free-bar,
+	.st-root .st-save-state[data-state]::before { animation: none; }
+	.st-root .st-chip:hover,
+	.st-root .st-card.is-clickable:hover,
+	.st-root .st-comment-marker:hover,
+	.st-root button.st-help-fab:hover { transform: none; }
+	.st-root .st-item,
+	.st-root .st-sheet,
+	.st-root .st-script,
+	.st-root .st-margin,
+	.st-root .st-comment,
+	.st-root .st-chip,
+	.st-root .st-card { transition: none; }
 }
+
 
 /* ---------- misc ---------- */
 .st-load-error { padding: 40px; max-width: 600px; margin: 0 auto; }
@@ -801,7 +820,7 @@
 .st-root .st-sheet textarea.st-text:hover,
 .st-root .st-sheet textarea.st-text:focus,
 .st-root .st-sheet textarea.st-text:focus-visible,
-.st-root .st-sheet textarea.st-text:active { color: transparent !important; }
+.st-root .st-sheet textarea.st-text:active { color: transparent; }
 .st-root .st-sheet textarea.st-text::selection { color: transparent; background: rgba(66, 133, 244, 0.32); }
 .st-block-line.has-panel-label > .st-label { z-index: 2; }
 
@@ -916,9 +935,7 @@
 	background: var(--background-secondary);
 }
 
-@media (prefers-reduced-motion: reduce) {
-	.st-format-bar.is-visible, .st-save-state::before { animation: none !important; }
-}
+
 .st-root:focus { outline: none; }
 
 /* ===================================================================
@@ -1071,7 +1088,6 @@
 .st-nav-collapsed .st-nav-head { justify-content: center; padding: 6px 0; }
 .st-nav-collapsed .st-root button.st-nav-toggle, .st-nav-collapsed button.st-nav-toggle { margin: 0; }
 .st-root input.st-nav-goto {
-	width: 100%;
 	margin: 6px 8px 2px;
 	width: calc(100% - 16px);
 	font-size: var(--font-ui-smaller);
@@ -1248,13 +1264,11 @@
 .st-comment-text a.st-note-link {
 	color: var(--st-accent);
 	text-decoration: underline;
-	text-decoration-thickness: 1px;
-	text-underline-offset: 2px;
 	cursor: pointer;
 	word-break: break-word;
 }
-.st-comment-text a.st-note-link:hover { text-decoration-thickness: 2px; }
-.st-comment-text a.st-note-link.is-unresolved { opacity: 0.6; text-decoration-style: dashed; }
+.st-comment-text a.st-note-link:hover { opacity: 0.85; }
+.st-comment-text a.st-note-link.is-unresolved { opacity: 0.6; }
 
 .st-comment-buttons { align-items: center; }
 .st-root .st-comment-buttons button.st-comment-link-btn {
@@ -1288,3 +1302,5 @@
 .st-link-row.is-selected { background: var(--background-modifier-hover); box-shadow: inset 3px 0 0 var(--interactive-accent); }
 .st-link-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .st-link-path { font-size: 11px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.st-plus::before { content: "+ "; }

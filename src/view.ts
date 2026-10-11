@@ -1,4 +1,4 @@
-import { Menu, Notice, TextFileView, WorkspaceLeaf, setIcon } from "obsidian";
+import { Menu, MenuItem, Notice, TextFileView, WorkspaceLeaf, setIcon } from "obsidian";
 import type StorytellerPlugin from "./main";
 import {
 	balloonNumbers,
@@ -87,6 +87,8 @@ export class ComicView extends TextFileView {
 	private mirrors = new WeakMap<HTMLTextAreaElement, HTMLElement>();
 	private formatBar: HTMLElement | null = null;
 	private formatTarget: HTMLTextAreaElement | null = null;
+	/** The last formatting change, so Ctrl+Z inside the text box can take it back. */
+	private formatUndo: { ta: HTMLTextAreaElement; before: string; after: string; selStart: number; selEnd: number } | null = null;
 	/** After a re-render, focus this field inside the focused item instead of its first field. */
 	private focusSelector: string | null = null;
 	private focusCaret: number | null = null;
@@ -165,16 +167,13 @@ export class ComicView extends TextFileView {
 
 	/** A notice with an Undo button: deleting is quick, and so is taking it back. */
 	private undoNotice(message: string) {
-		const frag = document.createDocumentFragment();
-		frag.append(document.createTextNode(message + "  "));
-		const btn = document.createElement("button");
-		btn.className = "st-notice-undo";
-		btn.textContent = "Undo";
-		btn.addEventListener("click", (e) => {
-			e.stopPropagation();
-			this.undo();
+		const frag = createFragment((f) => {
+			f.appendText(message + "  ");
+			f.createEl("button", { cls: "st-notice-undo", text: "Undo" }).addEventListener("click", (e) => {
+				e.stopPropagation();
+				this.undo();
+			});
 		});
-		frag.append(btn);
 		new Notice(frag, 7000);
 	}
 
@@ -206,7 +205,7 @@ export class ComicView extends TextFileView {
 			try {
 				this.doc = normalizeDoc(JSON.parse(data), title);
 				if (this.migrateNoteBlocks()) this.requestSave();
-			} catch (e) {
+			} catch {
 				// Keep the raw text so a broken file is never overwritten.
 				this.loadError = data;
 			}
@@ -257,8 +256,7 @@ export class ComicView extends TextFileView {
 		this.contentEl.addEventListener("keydown", (e) => this.onKeydown(e));
 		this.registerDomEvent(window, "dragend", () => this.endDrag());
 		// Obsidian's light/dark switch: Auto paper recolours via CSS; keep the sun/moon icon in step.
-		const ws = (this.app as any)?.workspace;
-		if (ws?.on) this.registerEvent(ws.on("css-change", () => this.updatePaperIcon()));
+		this.registerEvent(this.app.workspace.on("css-change", () => this.updatePaperIcon()));
 		// Over the toolbar or other dead areas: hide the insertion line so it never promises a drop that won't happen.
 		this.contentEl.addEventListener("dragover", (e) => {
 			if (this.drag && !(e.target as HTMLElement).closest(".st-script, .st-palette, .st-nav")) this.clearDropHint();
@@ -332,7 +330,7 @@ export class ComicView extends TextFileView {
 		if (!prev) return new Notice("Nothing to undo");
 		this.redoStack.push(JSON.stringify(this.doc));
 		this.capture();
-		this.doc = JSON.parse(prev);
+		this.doc = JSON.parse(prev) as ComicDoc;
 		this.hideFormatBar();
 		this.requestSave();
 		this.renderAll();
@@ -343,7 +341,7 @@ export class ComicView extends TextFileView {
 		if (!next) return new Notice("Nothing to redo");
 		this.undoStack.push(JSON.stringify(this.doc));
 		this.capture();
-		this.doc = JSON.parse(next);
+		this.doc = JSON.parse(next) as ComicDoc;
 		this.requestSave();
 		this.renderAll();
 	}
@@ -443,7 +441,7 @@ export class ComicView extends TextFileView {
 		if (!this.doc.pages.length) list.createDiv({ cls: "st-palette-empty", text: "No pages yet." });
 
 		if (!collapsed && !this.readMode) {
-			const add = el.createEl("button", { cls: "st-nav-add", text: "+ Add page" });
+			const add = el.createEl("button", { cls: "st-nav-add st-plus", text: "Add page" });
 			add.addEventListener("click", () => this.addPage());
 		}
 
@@ -527,7 +525,7 @@ export class ComicView extends TextFileView {
 		this.plugin.settings.pageNavCollapsed = collapsed;
 		this.navEl?.parentElement?.toggleClass("st-nav-collapsed", collapsed);
 		this.renderNav();
-		this.plugin.saveSettings({ from: this, scope: "none" });
+		void this.plugin.saveSettings({ from: this, scope: "none" });
 		window.requestAnimationFrame(() => this.queueLayout());
 	}
 
@@ -802,7 +800,7 @@ export class ComicView extends TextFileView {
 		const body = root.createDiv("st-body");
 		body.toggleClass("st-no-palette", reading || !this.paletteOpen);
 		body.toggleClass("st-no-side", reading || !this.sideOpen);
-		body.style.setProperty("--st-palette-w", this.plugin.settings.paletteWidth + "px");
+		body.setCssProps({ "--st-palette-w": this.plugin.settings.paletteWidth + "px" });
 		body.toggleClass("st-nav-collapsed", this.plugin.settings.pageNavCollapsed);
 		this.paletteEl = body.createDiv("st-palette");
 		this.wirePaletteDrop(this.paletteEl);
@@ -853,7 +851,7 @@ export class ComicView extends TextFileView {
 				const item = this.scriptEl.querySelector<HTMLElement>(`[data-id="${this.focusAfterRender}"]`);
 				const el = item?.querySelector<HTMLInputElement | HTMLTextAreaElement>(sel) ?? item?.querySelector<HTMLElement>(".st-focus-first");
 				el?.focus();
-				if ((el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) && this.focusCaret !== null) el.setSelectionRange(this.focusCaret, this.focusCaret);
+				if (el && (el.instanceOf(HTMLInputElement) || el.instanceOf(HTMLTextAreaElement)) && this.focusCaret !== null) el.setSelectionRange(this.focusCaret, this.focusCaret);
 				this.focusAfterRender = null;
 				this.focusSelector = null;
 				this.focusCaret = null;
@@ -889,8 +887,7 @@ export class ComicView extends TextFileView {
 
 	private applyAppearance() {
 		const s = this.plugin.settings;
-		this.contentEl.style.setProperty("--st-font", s.fontFamily);
-		this.contentEl.style.setProperty("--st-font-size", s.fontSize + "px");
+		this.contentEl.setCssProps({ "--st-font": s.fontFamily, "--st-font-size": s.fontSize + "px" });
 		this.contentEl.removeClass("st-paper-auto", "st-paper-light", "st-paper-dark");
 		this.contentEl.addClass("st-paper-" + s.paperMode);
 	}
@@ -963,7 +960,7 @@ export class ComicView extends TextFileView {
 		this.paperToggle(bar);
 
 		const exp = bar.createEl("button", { cls: "st-export-btn mod-cta", text: "Export .docx" });
-		exp.addEventListener("click", () => this.plugin.exportView(this));
+		exp.addEventListener("click", () => void this.plugin.exportView(this));
 		if (!this.readMode) {
 			this.iconBtn(bar, "panel-right", "Pinned & revisions", () => {
 				this.sideOpen = !this.sideOpen;
@@ -986,7 +983,7 @@ export class ComicView extends TextFileView {
 		const set = (m: PaperMode) => {
 			this.plugin.settings.paperMode = m;
 			this.applyAppearance(); // colours change in place, no re-render needed
-			this.plugin.saveSettings({ from: this, scope: "none" });
+			void this.plugin.saveSettings({ from: this, scope: "none" });
 			this.updatePaperIcon();
 		};
 		const b = this.iconBtn(bar, dark ? "moon" : "sun", this.paperLabel(), () => set(this.paperIsDark() ? "light" : "dark"), "st-paper-toggle");
@@ -1060,7 +1057,7 @@ export class ComicView extends TextFileView {
 
 		settings.paletteSections.forEach((sec, i) => this.renderPaletteSection(el, sec, i));
 
-		const addSection = el.createEl("button", { cls: "st-palette-add", text: "+ New section" });
+		const addSection = el.createEl("button", { cls: "st-palette-add st-plus", text: "New section" });
 		addSection.addEventListener("click", () =>
 			new PromptModal(this.app, "New palette section", "My blocks", (name) => {
 				settings.paletteSections.push(newSection(name));
@@ -1080,7 +1077,7 @@ export class ComicView extends TextFileView {
 	}
 
 	private savePalette(scope: "all" | "script" | "palette" | "none") {
-		this.plugin.saveSettings({ from: this, scope });
+		void this.plugin.saveSettings({ from: this, scope });
 	}
 
 	private renderPaletteSection(parent: HTMLElement, sec: PaletteSection, index: number) {
@@ -1130,7 +1127,7 @@ export class ComicView extends TextFileView {
 		Array.from(list.children).forEach((el, i) => sec.items[i] && ((el as HTMLElement).dataset.pkey = sec.id + "/" + sec.items[i]));
 		if (!sec.items.length) list.createDiv({ cls: "st-pal-empty", text: "Drag blocks here" });
 
-		const add = wrap.createEl("button", { cls: "st-pal-add-type", text: "+ Block type" });
+		const add = wrap.createEl("button", { cls: "st-pal-add-type st-plus", text: "Block type" });
 		add.addEventListener("click", () => this.newTypeIn(sec));
 	}
 
@@ -1198,7 +1195,7 @@ export class ComicView extends TextFileView {
 						remove
 					).open();
 				});
-				(i as any).setWarning?.(true);
+				i.setWarning(true);
 			});
 		}
 		menu.showAtMouseEvent(e);
@@ -1255,7 +1252,7 @@ export class ComicView extends TextFileView {
 			menu.addSeparator();
 			menu.addItem((i) => {
 				i.setTitle("Delete block type").setIcon("trash").onClick(() => this.deleteType(type));
-				(i as any).setWarning?.(true);
+				i.setWarning(true);
 			});
 			menu.showAtMouseEvent(e);
 		});
@@ -1285,7 +1282,7 @@ export class ComicView extends TextFileView {
 					settings.presets.remove(preset);
 					this.savePalette("palette");
 				});
-				(i as any).setWarning?.(true);
+				i.setWarning(true);
 			});
 			menu.showAtMouseEvent(e);
 		});
@@ -1298,7 +1295,7 @@ export class ComicView extends TextFileView {
 		this.cardGrip(top, card);
 		const color = top.createEl("input", { cls: "st-pal-color", attr: { type: "color", "aria-label": "Colour" } });
 		color.value = type.color;
-		color.addEventListener("input", () => card.style.setProperty("--st-type-color", color.value));
+		color.addEventListener("input", () => card.setCssProps({ "--st-type-color": color.value }));
 		color.addEventListener("change", () => {
 			type.color = color.value;
 			this.savePalette("script");
@@ -1315,7 +1312,7 @@ export class ComicView extends TextFileView {
 			this.moveToSectionItems(menu, typeKey(type.id), sec);
 			menu.addItem((i) => {
 				i.setTitle("Delete block type").setIcon("trash").onClick(() => this.deleteType(type));
-				(i as any).setWarning?.(true);
+				i.setWarning(true);
 			});
 			menu.showAtMouseEvent(e);
 		});
@@ -1379,7 +1376,7 @@ export class ComicView extends TextFileView {
 					settings.presets.remove(preset);
 					this.savePalette("palette");
 				});
-				(i as any).setWarning?.(true);
+				i.setWarning(true);
 			});
 			menu.showAtMouseEvent(e);
 		});
@@ -1393,7 +1390,7 @@ export class ComicView extends TextFileView {
 			this.savePalette("palette");
 		});
 		if (type.style === "lettering" && !type.fixedSpeaker) {
-			const sp = row.createEl("input", { cls: "st-pal-input", attr: { type: "text", placeholder: "SPEAKER (mod)", "aria-label": "Speaker" } });
+			const sp = row.createEl("input", { cls: "st-pal-input", attr: { type: "text", placeholder: "Speaker (mod)", "aria-label": "Speaker" } });
 			sp.value = preset.speaker + (preset.modifier ? ` (${preset.modifier})` : "");
 			sp.addEventListener("change", () => {
 				const v = sp.value;
@@ -1413,7 +1410,7 @@ export class ComicView extends TextFileView {
 
 	private paletteCard(list: HTMLElement, color: string, payload: DragPayload): HTMLElement {
 		const card = list.createDiv({ cls: "st-pal-card", attr: { "data-drag-item": "" } });
-		card.style.setProperty("--st-type-color", color);
+		card.setCssProps({ "--st-type-color": color });
 		card.addEventListener("dragstart", (e) => {
 			if (e.target === card) this.startDrag(e, payload, card);
 		});
@@ -1447,7 +1444,7 @@ export class ComicView extends TextFileView {
 				onClick();
 			}
 		});
-		chip.style.setProperty("--st-type-color", color);
+		chip.setCssProps({ "--st-type-color": color });
 		if (icon) setIcon(chip.createSpan("st-chip-icon"), icon);
 		else chip.createSpan("st-chip-dot");
 		chip.createSpan({ cls: "st-chip-label", text: label });
@@ -1491,7 +1488,7 @@ export class ComicView extends TextFileView {
 		const settings = this.plugin.settings;
 		const apply = (w: number) => {
 			settings.paletteWidth = Math.round(Math.max(MIN_PALETTE, Math.min(MAX_PALETTE, w)));
-			body.style.setProperty("--st-palette-w", settings.paletteWidth + "px");
+			body.setCssProps({ "--st-palette-w": settings.paletteWidth + "px" });
 			if (settings.paletteWidth >= WIDE_PALETTE !== this.paletteWide) this.renderPalette();
 		};
 		handle.addEventListener("mousedown", (e) => {
@@ -1522,7 +1519,7 @@ export class ComicView extends TextFileView {
 		const canvas = this.scriptEl.createDiv("st-canvas");
 		const paper = canvas.createDiv("st-sheet");
 
-		const title = paper.createEl("input", { cls: "st-title", attr: { type: "text", placeholder: "TITLE OF BOOK #1", spellcheck: "false" } });
+		const title = paper.createEl("input", { cls: "st-title", attr: { type: "text", placeholder: "Title of book #1", spellcheck: "false" } });
 		title.value = this.doc.title;
 		this.bindText(title, (v) => (this.doc.title = v));
 		const byline = paper.createEl("input", { cls: "st-byline", attr: { type: "text", placeholder: "Date - by Your Name - you@email.com" } });
@@ -1534,7 +1531,7 @@ export class ComicView extends TextFileView {
 		const balloons = balloonNumbers(this.doc, this.plugin.settings, this.plugin.settings.balloonScope);
 		this.doc.pages.forEach((page, pi) => this.renderPage(pagesEl, page, pi, balloons));
 
-		const add = paper.createEl("button", { cls: "st-add-btn", text: "+ Add page" });
+		const add = paper.createEl("button", { cls: "st-add-btn st-plus", text: "Add page" });
 		add.addEventListener("click", () => this.addPage());
 
 		this.renderMargin(canvas);
@@ -1566,7 +1563,7 @@ export class ComicView extends TextFileView {
 
 		page.panels.forEach((panel, ni) => this.renderPanel(panelsEl, page, pi, panel, ni, balloons));
 		if (!locked) {
-			const add = el.createEl("button", { cls: "st-add-btn st-add-panel", text: "+ Panel" });
+			const add = el.createEl("button", { cls: "st-add-btn st-add-panel st-plus", text: "Panel" });
 			add.addEventListener("click", () => this.mutate(() => page.panels.push(newPanel(this.plugin.settings))));
 		}
 	}
@@ -1617,7 +1614,7 @@ export class ComicView extends TextFileView {
 		if (!locked) {
 			for (const type of this.plugin.settings.blockTypes) {
 				const b = quick.createEl("button", { text: "+ " + type.name });
-				b.style.setProperty("--st-type-color", type.color);
+				b.setCssProps({ "--st-type-color": type.color });
 				b.addEventListener("click", () => {
 					const block = newBlock(type);
 					this.focusAfterRender = block.id;
@@ -1634,7 +1631,7 @@ export class ComicView extends TextFileView {
 		const locked = isLocked(ref);
 		const el = this.itemShell(parent, "block", ref);
 		el.addClass("st-style-" + type.style);
-		el.style.setProperty("--st-type-color", type.color);
+		el.setCssProps({ "--st-type-color": type.color });
 		el.setAttr("aria-label", type.name);
 		el.setAttr("data-tooltip-position", "left");
 
@@ -1700,8 +1697,8 @@ export class ComicView extends TextFileView {
 			if (panelLabelEl) {
 				// The label sits over the first line; indent the text past it so wrapped lines return to the margin.
 				const indent = panelLabel(ref.panelIndex!).length + 2 + "ch";
-				ta.style.textIndent = indent;
-				this.mirrors.get(ta)!.style.textIndent = indent;
+				ta.setCssStyles({ textIndent: indent });
+				this.mirrors.get(ta)?.setCssStyles({ textIndent: indent });
 			}
 		}
 
@@ -1721,6 +1718,10 @@ export class ComicView extends TextFileView {
 			if (mod && e.key === "Enter" && !isLocked(ref)) {
 				e.preventDefault();
 				e.shiftKey ? this.insertPanelAfter(ref) : this.insertBlockAfter(ref, type.id);
+				return;
+			}
+			if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z" && this.undoFormat(ta)) {
+				e.preventDefault();
 				return;
 			}
 			const marker = this.shortcutMarker(e);
@@ -1817,22 +1818,28 @@ export class ComicView extends TextFileView {
 	private applyFormat(ta: HTMLTextAreaElement, marker: Marker) {
 		if (ta.readOnly) return new Notice("This block is locked.");
 		const value = ta.value;
-		const edit = toggleMarker(value, ta.selectionStart, ta.selectionEnd, marker);
-		const expected = value.slice(0, edit.from) + edit.insert + value.slice(edit.to);
+		const selStart = ta.selectionStart;
+		const selEnd = ta.selectionEnd;
+		const edit = toggleMarker(value, selStart, selEnd, marker);
 		ta.focus();
-		ta.setSelectionRange(edit.from, edit.to);
-		let ok = false;
-		try {
-			ok = document.execCommand("insertText", false, edit.insert);
-		} catch {
-			ok = false;
-		}
-		if (!ok || ta.value !== expected) {
-			ta.value = expected;
-			ta.dispatchEvent(new Event("input", { bubbles: true }));
-		}
+		ta.setRangeText(edit.insert, edit.from, edit.to);
 		ta.setSelectionRange(edit.selStart, edit.selEnd);
+		// Programmatic edits don't enter the text box's own undo history, so remember this one.
+		this.formatUndo = { ta, before: value, after: ta.value, selStart, selEnd };
+		ta.dispatchEvent(new Event("input", { bubbles: true }));
 		this.updateFormatBar(ta);
+	}
+
+	/** Ctrl+Z right after a formatting change undoes that change (then normal undo continues). */
+	private undoFormat(ta: HTMLTextAreaElement): boolean {
+		const u = this.formatUndo;
+		if (!u || u.ta !== ta || ta.value !== u.after) return false;
+		this.formatUndo = null;
+		ta.value = u.before;
+		ta.setSelectionRange(u.selStart, u.selEnd);
+		ta.dispatchEvent(new Event("input", { bubbles: true }));
+		this.updateFormatBar(ta);
+		return true;
 	}
 
 	private updateFormatBar(ta: HTMLTextAreaElement) {
@@ -1885,8 +1892,7 @@ export class ComicView extends TextFileView {
 		let top = at.top - host.top - h - 8;
 		if (top < 44) top = at.bottom - host.top + 8; // no room above: drop below the line
 		left = Math.max(8, Math.min(left, host.width - w - 8));
-		bar.style.left = left + "px";
-		bar.style.top = top + "px";
+		bar.setCssStyles({ left: left + "px", top: top + "px" });
 	}
 
 	/** Screen position of a character offset, measured on the preview layer (same text, same layout). */
@@ -1924,8 +1930,8 @@ export class ComicView extends TextFileView {
 	private wireFieldKeys(el: HTMLElement) {
 		el.addEventListener("keydown", (e) => {
 			const t = e.target as HTMLElement;
-			if (!t.closest(".st-sheet") || !(t instanceof HTMLTextAreaElement || t instanceof HTMLInputElement)) return;
-			const field = t as HTMLInputElement | HTMLTextAreaElement;
+			if (!t.closest(".st-sheet") || !(t.instanceOf(HTMLTextAreaElement) || t.instanceOf(HTMLInputElement))) return;
+			const field = t;
 			const mod = e.ctrlKey || e.metaKey;
 
 			if (e.key === "Escape") {
@@ -1952,9 +1958,9 @@ export class ComicView extends TextFileView {
 			// Speaker fields keep ↑/↓ for their autocomplete list.
 			if (field.hasAttribute("list")) return;
 			const collapsed = field.selectionStart === field.selectionEnd;
-			if (e.key === "ArrowDown" && collapsed && (field instanceof HTMLInputElement || field.selectionEnd === field.value.length)) {
+			if (e.key === "ArrowDown" && collapsed && (field.instanceOf(HTMLInputElement) || field.selectionEnd === field.value.length)) {
 				if (this.focusField(field, 1)) e.preventDefault();
-			} else if (e.key === "ArrowUp" && collapsed && (field instanceof HTMLInputElement || field.selectionStart === 0)) {
+			} else if (e.key === "ArrowUp" && collapsed && (field.instanceOf(HTMLInputElement) || field.selectionStart === 0)) {
 				if (this.focusField(field, -1)) e.preventDefault();
 			}
 		});
@@ -2021,7 +2027,7 @@ export class ComicView extends TextFileView {
 
 	private fitInput(input: HTMLInputElement) {
 		// The paper uses a monospace font, so character units give an exact fit.
-		input.style.width = Math.max(input.value.length || input.placeholder.length, 1) + "ch";
+		input.setCssStyles({ width: Math.max(input.value.length || input.placeholder.length, 1) + "ch" });
 	}
 
 	/** Container element shared by pages, panels and blocks: highlight, revision, lock and pin state. */
@@ -2127,15 +2133,15 @@ export class ComicView extends TextFileView {
 	}
 
 	private autosize(ta: HTMLTextAreaElement) {
-		ta.style.height = "auto";
-		ta.style.height = ta.scrollHeight + "px";
+		ta.setCssStyles({ height: "auto" });
+		ta.setCssStyles({ height: ta.scrollHeight + "px" });
 	}
 
 	private autosizeAll() {
 		const tas = Array.from(this.contentEl.querySelectorAll<HTMLTextAreaElement>("textarea.st-text"));
-		for (const ta of tas) ta.style.height = "auto";
+		for (const ta of tas) ta.setCssStyles({ height: "auto" });
 		const heights = tas.map((ta) => ta.scrollHeight);
-		tas.forEach((ta, i) => (ta.style.height = heights[i] + "px"));
+		tas.forEach((ta, i) => ta.setCssStyles({ height: heights[i] + "px" }));
 	}
 
 	// ---------------------------------------------------------------- context menu
@@ -2145,7 +2151,8 @@ export class ComicView extends TextFileView {
 		let sub: Menu | undefined;
 		menu.addItem((i) => {
 			i.setTitle(title).setIcon(icon);
-			sub = (i as any).setSubmenu?.();
+			// Submenus exist since Obsidian 1.5 but aren't in the public typings; fall back to a flat menu.
+			sub = (i as MenuItem & { setSubmenu?: () => Menu }).setSubmenu?.();
 		});
 		if (sub) fill(sub);
 		else fill(menu);
@@ -2158,7 +2165,7 @@ export class ComicView extends TextFileView {
 		const containerLocked = ref.kind === "page" ? false : ref.kind === "panel" ? ref.page.locked : !!(ref.page.locked || ref.panel?.locked);
 		const settings = this.plugin.settings;
 
-		menu.addItem((i) => i.setTitle("Note / Comment").setIcon("message-square-plus").onClick(() => this.startComment(item.id)));
+		menu.addItem((i) => i.setTitle("Note or comment").setIcon("message-square-plus").onClick(() => this.startComment(item.id)));
 		menu.addSeparator();
 
 		this.submenu(menu, "Highlight", "highlighter", (m) => {
@@ -2240,7 +2247,7 @@ export class ComicView extends TextFileView {
 			menu.addSeparator();
 			menu.addItem((i) => {
 				i.setTitle("Delete " + ref.kind).setIcon("trash").onClick(() => this.remove(ref));
-				(i as any).setWarning?.(true);
+				i.setWarning(true);
 			});
 		}
 		menu.showAtMouseEvent(e);
@@ -2354,9 +2361,9 @@ export class ComicView extends TextFileView {
 	private saveAsPreset(block: Block) {
 		const type = findType(this.plugin.settings, block.typeId);
 		const suggested = (block.speaker ? block.speaker + ": " : type.name + ": ") + block.text.slice(0, 24);
-		new PromptModal(this.app, "Save as reusable block", suggested, async (name) => {
+		new PromptModal(this.app, "Save as reusable block", suggested, (name) => {
 			this.plugin.settings.presets.push({ id: uid(), name, typeId: block.typeId, speaker: block.speaker, modifier: block.modifier, text: block.text });
-			await this.plugin.saveSettings({ from: this, scope: "palette" });
+			void this.plugin.saveSettings({ from: this, scope: "palette" });
 			new Notice(`Saved “${name}” to the palette.`);
 		}).open();
 	}
@@ -2367,8 +2374,14 @@ export class ComicView extends TextFileView {
 		if (!ref) return;
 		let changed = false;
 		this.capture();
-		if (ref.kind !== "page" && ref.page.collapsed) (ref.page.collapsed = false), (changed = true);
-		if (ref.kind === "block" && ref.panel?.collapsed) (ref.panel.collapsed = false), (changed = true);
+		if (ref.kind !== "page" && ref.page.collapsed) {
+			ref.page.collapsed = false;
+			changed = true;
+		}
+		if (ref.kind === "block" && ref.panel?.collapsed) {
+			ref.panel.collapsed = false;
+			changed = true;
+		}
 		if (changed) {
 			this.requestSave();
 			this.renderAll();
@@ -2484,7 +2497,7 @@ export class ComicView extends TextFileView {
 					this.mutate(() => ref.item.notes.remove(note));
 					this.undoNotice("Deleted comment.");
 				});
-				(i as any).setWarning?.(true);
+				i.setWarning(true);
 			});
 			menu.showAtMouseEvent(e);
 		});
@@ -2625,9 +2638,9 @@ export class ComicView extends TextFileView {
 			if (shift < 0) for (const p of placed) p.top -= shift;
 			for (let i = 1; i < placed.length; i++) placed[i].top = Math.max(placed[i].top, placed[i - 1].top + placed[i - 1].h + CARD_GAP);
 		}
-		for (const p of placed) p.card.style.top = p.top + "px";
+		for (const p of placed) p.card.setCssStyles({ top: p.top + "px" });
 		const bottom = placed.length ? placed[placed.length - 1].top + placed[placed.length - 1].h : 0;
-		layer.style.height = bottom + "px";
+		layer.setCssStyles({ height: bottom + "px" });
 
 		this.scriptEl.querySelectorAll(".st-comment-anchor").forEach((el) => el.removeClass("st-comment-anchor"));
 		const active = placed[k]?.card.dataset.anchor;

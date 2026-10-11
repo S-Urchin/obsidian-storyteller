@@ -18,8 +18,8 @@ Scripts are `.comic` files (JSON) that open in their own editor, not the regular
 - **Custom block types.** Use **+ New block type** for anything you like (radio chatter, flashback captions, editor's notes…). Pick a colour, a layout (description, lettering or freestyle), whether it gets a balloon number, and a default speaker such as `CAPTION` or `SFX`. Types are saved in plugin settings and work in every script.
 - **Saved blocks.** Right-click a block and choose **Save as reusable block** to keep it, content included, in the palette for reuse.
 - **Collapse** pages and panels with the chevron or by double-clicking the header. Toolbar buttons collapse or expand everything at once.
-- **Right-click anything** (a page heading, a panel, or a block) for **Note / Comment**, Highlight, Pin, Mark for revision, Lock, Change type, Insert below, Duplicate, Move up/down and Delete. Shift + right-click gives you the normal text menu (spellcheck, paste).
-- **Comments, Google Docs style.** Choose **Note / Comment** to open a comment card in the margin to the right of the paper, level with the item you commented on. Cards can be edited (⋮ → Edit), resolved (✓) and deleted. Collapse the margin to small markers with the » button. The toolbar's comment button can also show resolved comments.
+- **Right-click anything** (a page heading, a panel, or a block) for **Note or comment**, Highlight, Pin, Mark for revision, Lock, Change type, Insert below, Duplicate, Move up/down and Delete. Shift + right-click gives you the normal text menu (spellcheck, paste).
+- **Comments, Google Docs style.** Choose **Note or comment** to open a comment card in the margin to the right of the paper, level with the item you commented on. Cards can be edited (⋮ → Edit), resolved (✓) and deleted. Collapse the margin to small markers with the » button. The toolbar's comment button can also show resolved comments.
 - **[[Links]] to your notes in comments.** Type `[[` in a comment, or click its link button, and a list of your vault notes appears and filters as you type. Pick one with the arrow keys and Enter, Tab or a click. If nothing matches, you can link to a new note. Posted links open the note when clicked (Ctrl+click for a new tab), Ctrl+hover shows Obsidian's page preview, and links to notes that don't exist yet appear faded and create the note when clicked. In the Word export, links become plain text (`[[Maya bio|Maya]]` becomes “Maya”). Obsidian only indexes Markdown files, so these links don't show up in backlinks or the graph.
 - **Lock** a page, panel or block so it can't be edited, moved or deleted. Locking a page also locks everything inside it.
 - **Mark for revision.** Flagged items get a red marker and appear in the **Revise** tab of the right-hand panel.
@@ -70,7 +70,7 @@ npm run build
 
 Copy `main.js`, `manifest.json` and `styles.css` into `<your vault>/.obsidian/plugins/storyteller-comic-drafter/`, then enable **Storyteller Comic Drafter** under *Settings → Community plugins*.
 
-For development, run `npm run dev` to rebuild on save.
+For development, run `npm run dev` to rebuild on save, and `npm run lint` to run the same ESLint rules as Obsidian's plugin review (`eslint-plugin-obsidianmd`).
 
 Create a script from the ribbon's book icon, the *New comic script* command, or by right-clicking a folder.
 

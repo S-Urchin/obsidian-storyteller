@@ -24,12 +24,12 @@ export class BlockTypeModal extends Modal {
 		const d = this.draft;
 
 		new Setting(contentEl).setName("Name").addText((t) =>
-			t.setPlaceholder("e.g. Radio chatter").setValue(d.name).onChange((v) => (d.name = v))
+			t.setPlaceholder("For example: radio chatter").setValue(d.name).onChange((v) => (d.name = v))
 		);
 		new Setting(contentEl).setName("Colour").addColorPicker((c) => c.setValue(d.color).onChange((v) => (d.color = v)));
 		new Setting(contentEl)
 			.setName("Layout")
-			.setDesc("Description: prose, like a panel description. Lettering: 1. SPEAKER (modifier): text. Freestyle: anything, with its own alignment, indent, size and box.")
+			.setDesc("Description is prose, like a panel description. Lettering has a speaker and a numbered line, like dialogue. Freestyle is anything, with its own alignment, indent, size and box.")
 			.addDropdown((dd) =>
 				dd
 					.addOptions({ description: "Description", lettering: "Lettering (speaker + text)", freestyle: "Freestyle (anything, your own layout)" })
@@ -42,11 +42,11 @@ export class BlockTypeModal extends Modal {
 		if (d.style === "lettering") {
 			new Setting(contentEl)
 				.setName("Numbered balloon")
-				.setDesc("Counts toward the 1., 2., 3. lettering numbers.")
+				.setDesc("Counts toward the numbered lettering in each panel or page.")
 				.addToggle((t) => t.setValue(d.numbered).onChange((v) => (d.numbered = v)));
 			new Setting(contentEl)
 				.setName("Default speaker")
-				.setDesc("Pre-filled speaker, e.g. CAPTION, SFX, RADIO.")
+				.setDesc("Pre-filled speaker, such as CAPTION, SFX or RADIO.")
 				.addText((t) => t.setValue(d.defaultSpeaker).onChange((v) => (d.defaultSpeaker = v.toUpperCase())));
 			new Setting(contentEl)
 				.setName("Fixed speaker")
@@ -117,15 +117,15 @@ export class ConfirmModal extends Modal {
 		this.contentEl.createEl("p", { text: this.message });
 		new Setting(this.contentEl)
 			.addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()))
-			.addButton((b) =>
+			.addButton((b) => {
+				b.buttonEl.addClass("mod-warning");
 				b
 					.setButtonText(this.confirmText)
-					.setWarning()
 					.onClick(() => {
 						this.onConfirm();
 						this.close();
-					})
-			);
+					});
+			});
 	}
 
 	onClose() {
@@ -197,7 +197,7 @@ export class HelpModal extends Modal {
 			["Your own blocks", "Use + New block type in the palette for anything you need, such as RADIO, FLASHBACK CAPTION or EDITOR'S NOTE. Right-click a finished block and choose “Save as reusable block” to keep it, text included."],
 			["Palette sections", "Group blocks however you like with + New section, and drag blocks between sections. Drag a block from the script into a section to save it there."],
 			["Edit blocks in the palette", "Drag the palette's right edge wider and every block becomes an editor for its name, colour, speaker and default text."],
-			["Comments", "Right-click → Note / Comment opens a card beside the page, as in Google Docs. Resolve it with ✓; the toolbar's comment button can show resolved ones again."],
+			["Comments", "Right-click → Note or comment opens a card beside the page, as in Google Docs. Resolve it with ✓; the toolbar's comment button can show resolved ones again."],
 			["Link notes in comments", "Type [[ in a comment (or click the link button) to pick a note from your vault. Posted links open the note; Ctrl+click opens it in a new tab and Ctrl+hover shows a preview. Links to notes that don't exist yet appear faded, and clicking one creates the note."],
 			["Pinned & revisions", "The panel button at the top-right lists everything you've pinned or marked for revision. Click an item to jump to it."],
 			["Dark or light paper", "The sun/moon button flips the paper. Right-click it for Auto, which follows Obsidian's theme."],

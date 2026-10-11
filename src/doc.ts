@@ -12,6 +12,9 @@ import {
 	StorytellerSettings,
 	DEFAULT_FREE_FORMAT,
 	FreeFormat,
+	HIGHLIGHT_COLORS,
+	HighlightColor,
+	SideNote,
 } from "./types";
 
 export function uid(): string {
@@ -69,10 +72,12 @@ export function newDoc(settings: StorytellerSettings, title: string): ComicDoc {
 	return { format: "storyteller-comic", version: 1, title, byline: defaultByline(settings), pages: [newPage(settings)] };
 }
 
+type Nested = ItemMeta & { panels?: Nested[]; blocks?: Nested[] };
+
 /** Deep-copies an item and gives it (and every descendant) fresh ids. */
 export function cloneWithNewIds<T extends ItemMeta>(item: T): T {
-	const copy = JSON.parse(JSON.stringify(item));
-	const reId = (o: any) => {
+	const copy = JSON.parse(JSON.stringify(item)) as T;
+	const reId = (o: Nested) => {
 		o.id = uid();
 		o.locked = false;
 		o.notes = [];
@@ -83,41 +88,81 @@ export function cloneWithNewIds<T extends ItemMeta>(item: T): T {
 	return copy;
 }
 
-/** Fills in any missing fields so older or hand-edited files still load. */
-export function normalizeDoc(raw: any, fallbackTitle: string): ComicDoc {
-	const fixMeta = (o: any) => {
-		o.id = typeof o.id === "string" ? o.id : uid();
-		o.locked = !!o.locked;
-		o.revision = !!o.revision;
-		o.pinned = !!o.pinned;
-		o.highlight = o.highlight ?? null;
-		o.notes = Array.isArray(o.notes) ? o.notes : [];
+// ---------------------------------------------------------------- loading files safely
+
+type Loose = Record<string, unknown>;
+const obj = (v: unknown): Loose => (v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Loose) : {});
+const list = (v: unknown): unknown[] => (Array.isArray(v) ? (v as unknown[]) : []);
+const str = (v: unknown, fallback: string): string => (typeof v === "string" ? v : fallback);
+const oneOf = <T extends string>(v: unknown, options: readonly T[], fallback: T): T => (options.includes(v as T) ? (v as T) : fallback);
+
+function loadNote(v: unknown): SideNote {
+	const o = obj(v);
+	return {
+		id: str(o.id, uid()),
+		text: str(o.text, ""),
+		author: str(o.author, ""),
+		created: typeof o.created === "number" ? o.created : Date.now(),
+		resolved: !!o.resolved,
 	};
-	const doc: ComicDoc = {
+}
+
+function loadMeta(o: Loose): ItemMeta {
+	return {
+		id: str(o.id, uid()),
+		locked: !!o.locked,
+		revision: !!o.revision,
+		pinned: !!o.pinned,
+		highlight: HIGHLIGHT_COLORS.includes(o.highlight as HighlightColor) ? (o.highlight as HighlightColor) : null,
+		notes: list(o.notes).map(loadNote),
+	};
+}
+
+function loadFormat(v: unknown): FreeFormat | undefined {
+	if (v === undefined) return undefined;
+	const o = obj(v);
+	return {
+		align: oneOf(o.align, ["left", "center", "right"] as const, DEFAULT_FREE_FORMAT.align),
+		indent: !!o.indent,
+		size: oneOf(o.size, ["small", "normal", "large"] as const, DEFAULT_FREE_FORMAT.size),
+		box: !!o.box,
+	};
+}
+
+function loadBlock(v: unknown): Block {
+	const o = obj(v);
+	const block: Block = {
+		...loadMeta(o),
+		typeId: str(o.typeId, "description"),
+		speaker: str(o.speaker, ""),
+		modifier: str(o.modifier, ""),
+		text: str(o.text, ""),
+	};
+	const format = loadFormat(o.format);
+	if (format) block.format = format;
+	return block;
+}
+
+function loadPanel(v: unknown): Panel {
+	const o = obj(v);
+	return { ...loadMeta(o), collapsed: !!o.collapsed, blocks: list(o.blocks).map(loadBlock) };
+}
+
+function loadPage(v: unknown): Page {
+	const o = obj(v);
+	return { ...loadMeta(o), collapsed: !!o.collapsed, panels: list(o.panels).map(loadPanel) };
+}
+
+/** Builds a clean document from parsed JSON, filling in anything missing so older or hand-edited files still load. */
+export function normalizeDoc(raw: unknown, fallbackTitle: string): ComicDoc {
+	const o = obj(raw);
+	return {
 		format: "storyteller-comic",
 		version: 1,
-		title: typeof raw?.title === "string" ? raw.title : fallbackTitle,
-		byline: typeof raw?.byline === "string" ? raw.byline : "",
-		pages: Array.isArray(raw?.pages) ? raw.pages : [],
+		title: str(o.title, fallbackTitle),
+		byline: str(o.byline, ""),
+		pages: list(o.pages).map(loadPage),
 	};
-	for (const page of doc.pages) {
-		fixMeta(page);
-		page.collapsed = !!page.collapsed;
-		page.panels = Array.isArray(page.panels) ? page.panels : [];
-		for (const panel of page.panels) {
-			fixMeta(panel);
-			panel.collapsed = !!panel.collapsed;
-			panel.blocks = Array.isArray(panel.blocks) ? panel.blocks : [];
-			for (const block of panel.blocks) {
-				fixMeta(block);
-				block.typeId = block.typeId ?? "description";
-				block.speaker = block.speaker ?? "";
-				block.modifier = block.modifier ?? "";
-				block.text = block.text ?? "";
-			}
-		}
-	}
-	return doc;
 }
 
 /** Walks every page, panel and block in reading order. */

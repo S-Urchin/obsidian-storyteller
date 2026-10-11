@@ -78,14 +78,14 @@ export function animateRender(
 		const parent = parentKeyOf?.(el);
 		const rel = dy - (parent ? shift.get(parent) ?? 0 : 0);
 		if (Math.abs(rel) < 1 || Math.abs(dy) > 3000) continue;
-		el.style.transform = `translateY(${rel}px)`;
+		el.setCssStyles({ transform: `translateY(${rel}px)` });
 		moved.push(el);
 	}
 	if (moved.length) {
 		void moved[0].offsetHeight; // commit the inverted positions before playing
 		for (const el of moved) {
 			el.addClass("st-flip");
-			el.style.transform = "";
+			el.setCssStyles({ transform: "" });
 			let done = false;
 			const end = () => {
 				if (done) return;

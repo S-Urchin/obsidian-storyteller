@@ -24,13 +24,7 @@ export function renderLinked(parent: HTMLElement, text: string, app: App, source
 		a.addEventListener("click", (e) => {
 			e.preventDefault();
 			e.stopPropagation(); // don't also activate the comment card
-			let newLeaf: boolean | string = e.ctrlKey || e.metaKey;
-			try {
-				newLeaf = Keymap.isModEvent(e) as boolean | string;
-			} catch {
-				/* older Obsidian: plain boolean */
-			}
-			app.workspace.openLinkText(linktext, sourcePath, newLeaf as any);
+			void app.workspace.openLinkText(linktext, sourcePath, Keymap.isModEvent(e));
 		});
 		a.addEventListener("mouseover", (e) => {
 			app.workspace.trigger("hover-link", { event: e, source: HOVER_SOURCE, hoverParent, targetEl: a, linktext, sourcePath });
@@ -83,7 +77,7 @@ export class LinkSuggest {
 		const caret = ta.selectionStart;
 		if (caret !== ta.selectionEnd) return this.close();
 		const before = ta.value.slice(0, caret);
-		const m = before.match(/\[\[([^\[\]\n]*)$/);
+		const m = before.match(/\[\[([^[\]\n]*)$/);
 		if (!m) return this.close();
 		this.start = caret - m[0].length;
 		const query = m[1].split("|")[0].split("#")[0].trim().toLowerCase();
@@ -125,7 +119,7 @@ export class LinkSuggest {
 		}
 		const el = this.el;
 		el.empty();
-		el.style.top = this.ta.offsetTop + this.ta.offsetHeight + 4 + "px";
+		el.setCssStyles({ top: this.ta.offsetTop + this.ta.offsetHeight + 4 + "px" });
 		this.items.forEach((item, i) => {
 			const row = el.createDiv({ cls: "st-link-row", attr: { role: "option", "aria-selected": String(i === this.selected) } });
 			row.toggleClass("is-selected", i === this.selected);

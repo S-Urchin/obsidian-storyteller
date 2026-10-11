@@ -1,4 +1,4 @@
-import { normalizePath, Notice, Plugin, TFile, TFolder } from "obsidian";
+import { App, normalizePath, Notice, Plugin, TFile, TFolder } from "obsidian";
 import { DEFAULT_SETTINGS, EXPORT_FOLDER, FILE_EXTENSION, SETTINGS_SCHEMA, VIEW_TYPE_COMIC } from "./defaults";
 import { newDoc, normalizeDoc } from "./doc";
 import { ensureSections } from "./palette";
@@ -25,8 +25,8 @@ export default class StorytellerPlugin extends Plugin {
 		this.addCommand({ id: "new-comic-script", name: "New comic script", callback: () => this.createScript() });
 		this.addCommand({
 			id: "export-docx",
-			name: "Export current script to Word (.docx)",
-			checkCallback: (checking) => this.withView(checking, (v) => this.exportView(v)),
+			name: "Export current script as .docx",
+			checkCallback: (checking) => this.withView(checking, (v) => void this.exportView(v)),
 		});
 		this.addCommand({
 			id: "add-page",
@@ -70,7 +70,7 @@ export default class StorytellerPlugin extends Plugin {
 					menu.addItem((i) => i.setTitle("New comic script").setIcon("book-open").onClick(() => this.createScript(file)));
 				} else if (file instanceof TFile && file.extension === FILE_EXTENSION) {
 					menu.addItem((i) =>
-						i.setTitle("Export to Word (.docx)").setIcon("file-output").onClick(async () => {
+						i.setTitle("Export as .docx").setIcon("file-output").onClick(async () => {
 							const doc = normalizeDoc(JSON.parse(await this.app.vault.read(file)), file.basename);
 							await this.exportDoc(file, doc);
 						})
@@ -88,13 +88,13 @@ export default class StorytellerPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		const saved = (await this.loadData()) ?? {};
+		const saved = ((await this.loadData()) ?? {}) as Partial<StorytellerSettings>;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
 		// Never share the default arrays with the live settings object.
-		this.settings.blockTypes = (saved.blockTypes ?? DEFAULT_SETTINGS.blockTypes).map((t: any) => ({ ...t }));
+		this.settings.blockTypes = (saved.blockTypes ?? DEFAULT_SETTINGS.blockTypes).map((t) => ({ ...t }));
 		this.settings.presets = [...(saved.presets ?? [])];
 		this.settings.newPanelBlocks = [...(saved.newPanelBlocks ?? DEFAULT_SETTINGS.newPanelBlocks)];
-		this.settings.paletteSections = (saved.paletteSections ?? []).map((s: any) => ({ ...s, items: [...(s.items ?? [])] }));
+		this.settings.paletteSections = (saved.paletteSections ?? []).map((s) => ({ ...s, items: [...(s.items ?? [])] }));
 
 		// v1 had a "Note to artist" block and a "note" layout; notes are now comments.
 		if ((saved.schema ?? 1) < 2) {
@@ -165,7 +165,7 @@ export default class StorytellerPlugin extends Plugin {
 	}
 
 	async exportDoc(file: TFile, doc: ComicDoc) {
-		const notice = new Notice("Exporting to Word…", 0);
+		const notice = new Notice("Exporting .docx…", 0);
 		try {
 			const buffer = await exportDocx(doc, this.settings);
 			const path = await this.exportPath(file);
@@ -174,14 +174,21 @@ export default class StorytellerPlugin extends Plugin {
 			else await this.app.vault.createBinary(path, buffer);
 			notice.hide();
 
-			const app = this.app as any;
-			const done = new Notice(`Exported to ${path}` + (app.showInFolder ? " — click to show it in your file manager." : ""), 8000);
-			const el: HTMLElement | undefined = (done as any).noticeEl ?? (done as any).messageEl;
-			if (app.showInFolder && el) {
-				el.addClass("st-notice-link");
-				el.addEventListener("click", () => app.showInFolder(path));
-			}
-			if (this.settings.openAfterExport) app.openWithDefaultApp?.(path);
+			// Desktop-only helpers that aren't part of the public API; used only when present.
+			const shell = this.app as App & { showInFolder?: (path: string) => void; openWithDefaultApp?: (path: string) => void };
+			new Notice(
+				createFragment((f) => {
+					f.appendText(`Exported to ${path}`);
+					if (!shell.showInFolder) return;
+					f.appendText(" — ");
+					f.createEl("a", { cls: "st-notice-link", text: "Show in file manager", attr: { href: "#" } }).addEventListener("click", (e) => {
+						e.preventDefault();
+						shell.showInFolder?.(path);
+					});
+				}),
+				8000
+			);
+			if (this.settings.openAfterExport) shell.openWithDefaultApp?.(path);
 		} catch (e) {
 			notice.hide();
 			console.error("Storyteller export failed", e);

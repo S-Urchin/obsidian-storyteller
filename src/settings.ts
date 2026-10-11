@@ -10,11 +10,15 @@ export class StorytellerSettingTab extends PluginSettingTab {
 	}
 
 	display(): void {
+		this.render();
+	}
+
+	private render(): void {
 		const { containerEl } = this;
 		const s = this.plugin.settings;
 		const save = async (rerender = false) => {
 			await this.plugin.saveSettings();
-			if (rerender) this.display();
+			if (rerender) this.render();
 		};
 		containerEl.empty();
 
@@ -33,7 +37,7 @@ export class StorytellerSettingTab extends PluginSettingTab {
 					: "Description"
 			);
 			const swatch = row.nameEl.createSpan({ cls: "st-settings-swatch" });
-			swatch.style.background = type.color;
+			swatch.setCssStyles({ background: type.color });
 			row.nameEl.prepend(swatch);
 			row.addExtraButton((b) =>
 				b.setIcon("arrow-up").setTooltip("Move up").setDisabled(i === 0).onClick(async () => {
@@ -49,9 +53,9 @@ export class StorytellerSettingTab extends PluginSettingTab {
 			);
 			row.addExtraButton((b) =>
 				b.setIcon("pencil").setTooltip("Edit").onClick(() =>
-					new BlockTypeModal(this.app, type, async (t) => {
+					new BlockTypeModal(this.app, type, (t) => {
 						Object.assign(type, t);
-						await save(true);
+						void save(true);
 					}).open()
 				)
 			);
@@ -69,9 +73,9 @@ export class StorytellerSettingTab extends PluginSettingTab {
 					.setButtonText("Add block type")
 					.setCta()
 					.onClick(() =>
-						new BlockTypeModal(this.app, null, async (t) => {
+						new BlockTypeModal(this.app, null, (t) => {
 							s.blockTypes.push(t);
-							await save(true);
+							void save(true);
 						}).open()
 					)
 			)
@@ -85,7 +89,7 @@ export class StorytellerSettingTab extends PluginSettingTab {
 		// ---- Saved blocks
 		new Setting(containerEl).setName("Saved blocks").setHeading();
 		if (!s.presets.length) {
-			containerEl.createEl("p", { cls: "setting-item-description", text: "None yet. Right-click a block and choose “Save as reusable block”." });
+			containerEl.createEl("p", { cls: "setting-item-description", text: "None yet. Right-click a block and choose save as reusable block." });
 		}
 		s.presets.forEach((p, i) => {
 			new Setting(containerEl)
@@ -103,7 +107,7 @@ export class StorytellerSettingTab extends PluginSettingTab {
 		new Setting(containerEl).setName("New pages and panels").setHeading();
 		new Setting(containerEl)
 			.setName("Panels on a new page")
-			.addSlider((sl) => sl.setLimits(0, 9, 1).setValue(s.newPagePanels).setDynamicTooltip().onChange(async (v) => {
+			.addSlider((sl) => sl.setLimits(0, 9, 1).setValue(s.newPagePanels).onChange(async (v) => {
 				s.newPagePanels = v;
 				await save();
 			}));
@@ -116,9 +120,9 @@ export class StorytellerSettingTab extends PluginSettingTab {
 			const cb = label.createEl("input", { attr: { type: "checkbox" } });
 			cb.checked = s.newPanelBlocks.includes(type.id);
 			label.appendText(" " + type.name);
-			cb.addEventListener("change", async () => {
+			cb.addEventListener("change", () => {
 				s.newPanelBlocks = cb.checked ? [...s.newPanelBlocks, type.id] : s.newPanelBlocks.filter((id) => id !== type.id);
-				await save();
+				void save();
 			});
 		}
 
@@ -144,13 +148,13 @@ export class StorytellerSettingTab extends PluginSettingTab {
 		new Setting(containerEl).setName("Editor appearance").setHeading();
 		new Setting(containerEl)
 			.setName("Draft font")
-			.setDesc("CSS font stack for the editor. Uses Courier Final Draft or Courier Prime if installed.")
+			.setDesc("CSS font stack for the editor. Uses Courier Final Draft or Courier Prime when installed.")
 			.addText((t) => t.setValue(s.fontFamily).onChange(async (v) => {
 				s.fontFamily = v || DEFAULT_SETTINGS.fontFamily;
 				await save();
 			}));
 		new Setting(containerEl).setName("Font size").addSlider((sl) =>
-			sl.setLimits(11, 24, 1).setValue(s.fontSize).setDynamicTooltip().onChange(async (v) => {
+			sl.setLimits(11, 24, 1).setValue(s.fontSize).onChange(async (v) => {
 				s.fontSize = v;
 				await save();
 			})
@@ -173,7 +177,7 @@ export class StorytellerSettingTab extends PluginSettingTab {
 			}));
 		new Setting(containerEl)
 			.setName("Your name")
-			.setDesc("Shown as the author of comments, in the Word export, and in new scripts' byline.")
+			.setDesc("Shown as the author of comments, in exported files, and in the byline of new scripts.")
 			.addText((t) => t.setValue(s.authorName).onChange(async (v) => {
 				s.authorName = v;
 				await save();

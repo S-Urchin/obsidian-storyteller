@@ -1,6 +1,7 @@
 import esbuild from "esbuild";
 import process from "process";
-import builtins from "builtin-modules";
+import { builtinModules } from "module";
+import { stripLegacyScriptTricks } from "./scripts/strip-legacy-script-tricks.mjs";
 
 const prod = process.argv[2] === "production";
 
@@ -21,8 +22,9 @@ const context = await esbuild.context({
     "@lezer/common",
     "@lezer/highlight",
     "@lezer/lr",
-    ...builtins,
+    ...builtinModules,
   ],
+  plugins: [stripLegacyScriptTricks],
   format: "cjs",
   target: "es2018",
   logLevel: "info",
