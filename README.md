@@ -11,6 +11,7 @@ Scripts are `.comic` files with their own editor. The editor and the export foll
 **Writing**
 - **Pages → panels → blocks.** Drag to reorder anything. Page, panel and balloon numbers update automatically.
 - **Block palette.** Drag or click Description, Dialogue, Caption, Thought, SFX or Freestyle into the script. Add your own block types and save reusable blocks, then organise them into sections.
+- **Quick-add row.** Each panel has a row of "+" buttons for adding blocks. Star (☆) the blocks you use most in the palette and only those appear there, in palette order, so the row stays short however big your palette gets.
 - **Speaker field.** Type `MAYA (off)` and it splits into speaker and modifier. Names autocomplete from the script.
 - **Formatting.** Bold, italic, underline and highlight (Ctrl+B / I / U, Ctrl+Shift+H). Freestyle blocks can also be aligned, indented, boxed or resized.
 - **Read mode** (Ctrl+E) shows the script as it will print.
