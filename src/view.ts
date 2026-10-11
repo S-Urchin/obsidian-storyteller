@@ -1697,7 +1697,9 @@ export class ComicView extends TextFileView {
 		el.setAttr("data-tooltip-position", "left");
 
 		const gutter = el.createDiv("st-gutter st-block-gutter");
-		this.dragHandle(gutter, el, ref, locked);
+		// A description carrying "Panel N:" is the panel's heading line: only the panel's grip
+		// belongs there, or grabbing the nearer one moves the text and leaves the label behind.
+		if (!panelLabelEl) this.dragHandle(gutter, el, ref, locked);
 		const side = el.createDiv("st-side-badges");
 		this.badges(side, ref);
 
