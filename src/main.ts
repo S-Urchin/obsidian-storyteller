@@ -31,6 +31,16 @@ export default class StorytellerPlugin extends Plugin {
 			checkCallback: (checking) => this.withView(checking, (v) => v.addPage()),
 		});
 		this.addCommand({
+			id: "toggle-read-mode",
+			name: "Toggle read mode",
+			checkCallback: (checking) => this.withView(checking, (v) => v.toggleReadMode()),
+		});
+		this.addCommand({
+			id: "show-shortcuts",
+			name: "Show help and keyboard shortcuts",
+			checkCallback: (checking) => this.withView(checking, (v) => v.showHelp()),
+		});
+		this.addCommand({
 			id: "collapse-all",
 			name: "Collapse all pages",
 			checkCallback: (checking) => this.withView(checking, (v) => v.setAllCollapsed(true)),

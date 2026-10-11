@@ -10,7 +10,9 @@ import {
 	ParagraphChild,
 	Tab,
 	TextRun,
+	UnderlineType,
 } from "docx";
+import { parseInline } from "./format";
 import { balloonNumbers, findType, pageLabel, panelLabel } from "./doc";
 import { Block, ComicDoc, HighlightColor, ItemMeta, StorytellerSettings } from "./types";
 
@@ -35,6 +37,7 @@ const HIGHLIGHT_MAP: Record<HighlightColor, (typeof DocxHighlight)[keyof typeof 
 interface RunStyle {
 	bold?: boolean;
 	italics?: boolean;
+	underline?: boolean;
 	highlight?: HighlightColor | null;
 }
 
@@ -44,29 +47,31 @@ export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): 
 	const hl = (c: HighlightColor | null | undefined) => (settings.exportHighlights && c ? HIGHLIGHT_MAP[c] : undefined);
 
 	const run = (text: string, style: RunStyle = {}) =>
-		new TextRun({ text, size: SIZE, bold: style.bold, italics: style.italics, highlight: hl(style.highlight) });
+		new TextRun({
+			text,
+			size: SIZE,
+			bold: style.bold,
+			italics: style.italics,
+			underline: style.underline ? { type: UnderlineType.SINGLE } : undefined,
+			highlight: hl(style.highlight),
+		});
 
-	/** Turns **bold**, *italic* and ==highlight== markup (and line breaks) into styled runs. */
+	/** Turns ***bold italic***, **bold**, *italic*, __underline__ and ==highlight== (and line breaks) into runs. */
 	const inlineRuns = (text: string, base: RunStyle): TextRun[] => {
 		const runs: TextRun[] = [];
-		const push = (t: string, style: RunStyle) => {
-			t.split("\n").forEach((line, i) => {
+		for (const seg of parseInline(text)) {
+			if (seg.marker) continue;
+			const style: RunStyle = {
+				bold: base.bold || seg.bold,
+				italics: base.italics || seg.italic,
+				underline: seg.underline,
+				highlight: seg.highlight ? base.highlight ?? "yellow" : base.highlight,
+			};
+			seg.text.split("\n").forEach((line, i) => {
 				if (i > 0) runs.push(new TextRun({ break: 1, size: SIZE }));
 				if (line) runs.push(run(line, style));
 			});
-		};
-		const re = /(\*\*[^*]+\*\*|==[^=]+==|\*[^*]+\*)/g;
-		let last = 0;
-		let m: RegExpExecArray | null;
-		while ((m = re.exec(text))) {
-			push(text.slice(last, m.index), base);
-			const tok = m[0];
-			if (tok.startsWith("**")) push(tok.slice(2, -2), { ...base, bold: true });
-			else if (tok.startsWith("==")) push(tok.slice(2, -2), { ...base, highlight: base.highlight ?? "yellow" });
-			else push(tok.slice(1, -1), { ...base, italics: true });
-			last = m.index + tok.length;
 		}
-		push(text.slice(last), base);
 		return runs;
 	};
 

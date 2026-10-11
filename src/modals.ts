@@ -132,3 +132,146 @@ export class ConfirmModal extends Modal {
 		this.contentEl.empty();
 	}
 }
+
+export type HelpTab = "start" | "shortcuts" | "tips";
+
+/**
+ * Help centre behind the "?" button: a short walkthrough for first use, every shortcut,
+ * and the features that are easy to miss, so nothing has to be memorised to be found.
+ */
+export class HelpModal extends Modal {
+	constructor(app: App, private tab: HelpTab = "start") {
+		super(app);
+	}
+
+	onOpen() {
+		this.titleEl.setText("Storyteller help");
+		this.modalEl.addClass("st-help-modal");
+		this.render();
+	}
+
+	private render() {
+		const { contentEl } = this;
+		contentEl.empty();
+		const tabs = contentEl.createDiv({ cls: "st-help-tabs", attr: { role: "tablist" } });
+		const items: [HelpTab, string][] = [
+			["start", "Getting started"],
+			["shortcuts", "Shortcuts"],
+			["tips", "Tips"],
+		];
+		for (const [id, label] of items) {
+			const b = tabs.createEl("button", { cls: "st-help-tab", text: label, attr: { role: "tab", "aria-selected": String(this.tab === id) } });
+			b.toggleClass("is-active", this.tab === id);
+			b.addEventListener("click", () => {
+				this.tab = id;
+				this.render();
+			});
+		}
+		const body = contentEl.createDiv("st-help-body");
+		if (this.tab === "start") this.renderStart(body);
+		else if (this.tab === "shortcuts") this.renderShortcuts(body);
+		else this.renderTips(body);
+	}
+
+	private renderStart(el: HTMLElement) {
+		const steps: [string, string][] = [
+			["Write a panel", "Each page starts with panels. Type the description right after “Panel 1:”. Add lettering with the + Dialogue / + Caption / + SFX buttons under a panel (hover to see them), or drag blocks in from the palette on the left."],
+			["Name the speaker", "In a dialogue block, type the character's name, with an optional modifier in brackets, for example MAYA (off). Names you've used before autocomplete. Balloon numbers and page and panel numbers fill themselves in."],
+			["Rearrange", "Hover over anything and drag its ⠿ grip to move it, even into another page. Numbers update automatically. Ctrl+Z undoes any change."],
+			["Right-click for more", "Right-click a page, panel or block to comment on it, highlight it, pin it, lock it, mark it for revision, duplicate it or delete it."],
+			["Format text", "Select some text and use the small bar that appears, or press Ctrl+B, Ctrl+I, Ctrl+U or Ctrl+Shift+H."],
+			["Review", "Click Read in the top-left (or press Ctrl+E) to see the clean script as it will print. Double-click any line to go back and edit it."],
+			["Export", "Click Export .docx. The Word file is saved in the “Exported” folder of your vault, ready for final edits in Word."],
+		];
+		const ol = el.createEl("ol", { cls: "st-help-steps" });
+		for (const [title, text] of steps) {
+			const li = ol.createEl("li");
+			li.createDiv({ cls: "st-help-step-title", text: title });
+			li.createDiv({ cls: "st-help-step-text", text });
+		}
+	}
+
+	private renderTips(el: HTMLElement) {
+		const tips: [string, string][] = [
+			["Your own blocks", "Use + New block type in the palette for anything you need, such as RADIO, FLASHBACK CAPTION or EDITOR'S NOTE. Right-click a finished block and choose “Save as reusable block” to keep it, text included."],
+			["Palette sections", "Group blocks however you like with + New section, and drag blocks between sections. Drag a block from the script into a section to save it there."],
+			["Edit blocks in the palette", "Drag the palette's right edge wider and every block becomes an editor for its name, colour, speaker and default text."],
+			["Comments", "Right-click → Note / Comment opens a card beside the page, as in Google Docs. Resolve it with ✓; the toolbar's comment button can show resolved ones again."],
+			["Pinned & revisions", "The panel button at the top-right lists everything you've pinned or marked for revision. Click an item to jump to it."],
+			["Dark or light paper", "The sun/moon button flips the paper. Right-click it for Auto, which follows Obsidian's theme."],
+			["Spelling", "Shift+right-click inside text for the normal menu with spelling suggestions and paste."],
+			["Oops", "Deleted something? Click Undo in the message that appears, or press Ctrl+Z (press Esc first if you're inside a text box)."],
+			["Lots of pages", "Collapse pages or panels you aren't working on (double-click their heading). While dragging, hold near the top or bottom edge to scroll."],
+		];
+		for (const [title, text] of tips) {
+			const row = el.createDiv("st-help-tip");
+			row.createDiv({ cls: "st-help-step-title", text: title });
+			row.createDiv({ cls: "st-help-step-text", text });
+		}
+	}
+
+	private renderShortcuts(el: HTMLElement) {
+		const groups: [string, [string, string][]][] = [
+			[
+				"Formatting (select text first, or use the bar that pops up)",
+				[
+					["Ctrl+B", "**Bold**"],
+					["Ctrl+I", "*Italic*"],
+					["Ctrl+B then Ctrl+I", "***Bold italic*** (the template's emphasis)"],
+					["Ctrl+U", "__Underline__"],
+					["Ctrl+Shift+H", "==Highlight=="],
+				],
+			],
+			[
+				"Writing",
+				[
+					["Ctrl+Enter", "New block of the same type below"],
+					["Ctrl+Shift+Enter", "New panel below"],
+					["↑ / ↓", "Move between fields (at the start or end of a field)"],
+					["Enter (in title / byline)", "Go to the next line"],
+					["Alt+↑ / Alt+↓", "Move the current block up or down"],
+					["Esc", "Leave the field"],
+					["MAYA (off)", "Type a modifier in brackets after the speaker"],
+				],
+			],
+			[
+				"Structure",
+				[
+					["Ctrl+Z / Ctrl+Shift+Z", "Undo / redo (outside a field)"],
+					["Right-click", "Comment, highlight, pin, lock, revise, move, delete…"],
+					["Drag the ⠿ grip", "Move pages, panels and blocks"],
+					["Double-click a heading", "Collapse or expand it"],
+					["Shift+right-click", "Normal text menu (spelling, paste)"],
+				],
+			],
+			[
+				"Palette & view",
+				[
+					["Click / Enter on a chip", "Add it to the current panel"],
+					["Drag the palette edge", "Wider palette = edit blocks in place"],
+					["Sun/moon button", "Light or dark paper (right-click for Auto)"],
+					["Ctrl+E", "Switch between Edit and Read mode"],
+					["Double-click (in Read mode)", "Edit that line"],
+					["? / Ctrl+/", "Open this help"],
+				],
+			],
+		];
+		for (const [title, rows] of groups) {
+			el.createEl("h4", { text: title });
+			const table = el.createEl("table", { cls: "st-shortcuts" });
+			for (const [keys, what] of rows) {
+				const tr = table.createEl("tr");
+				const kd = tr.createEl("td");
+				keys.split(" / ").forEach((k, i) => {
+					if (i) kd.appendText(" / ");
+					kd.createEl("kbd", { text: k });
+				});
+				tr.createEl("td", { text: what });
+			}
+		}
+	}
+
+	onClose() {
+		this.contentEl.empty();
+	}
+}

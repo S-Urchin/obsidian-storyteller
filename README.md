@@ -25,18 +25,31 @@ Scripts are `.comic` files (JSON) that open in their own editor, not the regular
 - **Pin** items to the **Pinned** tab so you can jump to them in one click.
 - **Speaker field.** Type `MAYA (off)` and the plugin splits it into the speaker and the modifier. Names autocomplete from the ones already in the script. For SFX and CAPTION blocks, type the modifier in brackets: `SFX (BIG)`.
 - **Animations.** New items fade in, moved and reordered items glide to their new place, deleted items fade out, and comment cards slide in from the margin. They animate only what changed and use the cheapest kind of animation, so long scripts stay responsive. Turn them off in *Settings → Animations*. They are always off if your system has reduced motion turned on.
-- **Dark mode.** Choose dark paper with light text, or light paper. **Auto** (the default) follows Obsidian's light/dark theme as you switch it. Click the sun/moon button in the toolbar to flip between light and dark, and right-click it to go back to Auto. You can also set it under *Settings → Paper style*. The Word export always uses normal black-on-white.
+- **Dark mode.** Choose Word-style dark paper (a charcoal page with a thin outline on a near-black backdrop, light text, and a matching comment column) or light paper. **Auto** (the default) follows Obsidian's light/dark theme as you switch it. Click the sun/moon button in the toolbar to flip between light and dark, and right-click it to go back to Auto. You can also set it under *Settings → Paper style*. The Word export always uses normal black-on-white.
+- **Help is one click away.** The round **?** button in the bottom-right corner (or pressing **?** outside a text box) opens a help window with three tabs: a 7-step **Getting started** guide, every **Shortcut**, and **Tips** for features that are easy to miss.
+- **Read mode.** Click **Read** in the toolbar (or press **Ctrl+E**) to see the finished script as it will print. Editing controls, the palette and comments are hidden, formatting shows without its `**` markers, empty blocks are left out, and each comic page sits on its own sheet like the Word export. Your place on screen is kept when you switch. Double-click any line to jump straight back to editing it.
+- **Text formatting.** Select text and press **Ctrl+B** (bold), **Ctrl+I** (italic), **Ctrl+U** (underline) or **Ctrl+Shift+H** (highlight), or use the small bar that appears above your selection. Press the same shortcut again to remove the formatting. Bold then italic gives ***bold italic***, the Greg Pak template's emphasis. Formatting shows as you type, with the `**` markers faded, and exports to Word as real formatting. Ctrl+Z inside a field undoes it.
+- **Status at a glance.** The toolbar shows Saved / Edited / Saving…, and Undo and Redo grey out when there's nothing to undo or redo.
+- **Mistakes are easy to undo.** Deleting a page, panel, block or comment, or clearing revision marks, shows a notice with an **Undo** button.
+- **Write from the keyboard.** ↑/↓ at the start or end of a field moves to the previous or next field. Enter moves on from the title and byline. **Alt+↑/↓** moves the current block, crossing into the next panel at the edges. **Esc** leaves the field so Ctrl+Z undoes structural changes. Palette chips work with Tab and Enter.
+- **Shortcut list.** The keyboard button in the toolbar, **Ctrl+/**, or the *Show keyboard shortcuts* command lists every shortcut and gesture.
 - **Undo/redo** with Ctrl+Z / Ctrl+Shift+Z when the cursor isn't in a text field.
 - **Export to Word.** Click **Export .docx** to save `<script name>.docx` in an **Exported** folder at the root of your vault; the folder is created the first time you export. Click the notice that appears to see the file in your file manager. You can change the folder in settings, or clear the setting to save next to each script. The export includes:
   - the template's layout, including its `ACTION` and `DIALOGUE` paragraph styles, so the file stays easy to edit in Word, with a page break before each comic page;
   - unresolved comments as Word margin comments;
   - a red `[REVISE]` before flagged items;
-  - your highlights, with `**bold**`, `*italic*` and `==highlight==` in block text formatted to match.
+  - your highlights, plus `***bold italic***`, `**bold**`, `*italic*`, `__underline__` and `==highlight==` in block text formatted to match.
 
 ## Keyboard shortcuts
 
 | Keys | Action |
 | --- | --- |
+| Ctrl/Cmd + B / I / U | Bold / italic / underline the selection |
+| Ctrl/Cmd + Shift + H | Highlight the selection |
+| Alt + ↑ / ↓ | Move the current block |
+| Esc | Leave the field |
+| Ctrl/Cmd + E | Switch between Edit and Read mode |
+| ? or Ctrl/Cmd + / | Open help & shortcuts |
 | Ctrl/Cmd + Enter | New block of the same type below |
 | Ctrl/Cmd + Shift + Enter | New panel below |
 | Ctrl/Cmd + Z / Shift + Z | Undo / redo (outside text fields) |

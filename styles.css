@@ -58,24 +58,25 @@
 
 .st-root.st-paper-dark,
 .theme-dark .st-root.st-paper-auto {
-	/* Like Word's dark mode: black page and comment pane on a dark grey backdrop. */
-	--st-sheet-bg: #000000;
+	/* Word's dark mode (colours sampled from it): charcoal page with a thin light
+	   outline, flat (no shadow), on a near-black backdrop. */
+	--st-sheet-bg: #262626;
 	--st-sheet-fg: #f2f2f2;
-	--st-sheet-muted: #9a9a9a;
-	--st-sheet-rule: #3a3a3a;
-	--st-sheet-edge: #3a3a3a;
-	--st-card-bg: #000000;
+	--st-sheet-muted: #a6a6a6;
+	--st-sheet-rule: #3f3f3f;
+	--st-sheet-edge: #8c8c8c;
+	--st-card-bg: #2f2f2f;
 	--st-card-fg: #f2f2f2;
-	--st-card-border: #4a4a4a;
-	--st-margin-bg: #000000;
-	--st-desk: #262626;
+	--st-card-border: #4d4d4d;
+	--st-margin-bg: #262626;
+	--st-desk: #0a0a0a;
 	--st-revise: #f28b82;
 	--st-revise-fg: #202124;
 	--st-accent: #8ab4f8;
 	--st-accent-fg: #202124;
 	--st-accent-glow: rgba(138, 180, 248, 0.45);
-	--st-shadow: rgba(0, 0, 0, 0.6);
-	--st-shadow-soft: rgba(0, 0, 0, 0.35);
+	--st-shadow: transparent;
+	--st-shadow-soft: transparent;
 	/* softer, brighter tints read better on dark paper */
 	--st-hl-yellow: rgba(253, 214, 99, 0.26);
 	--st-hl-green: rgba(129, 201, 149, 0.24);
@@ -769,3 +770,267 @@
 .theme-dark .st-root.st-paper-auto .st-margin.is-collapsed { padding: 0 4px; }
 .st-root.st-paper-dark .st-margin-head,
 .theme-dark .st-root.st-paper-auto .st-margin-head { color: var(--st-sheet-muted); padding-top: 8px; }
+
+/* ===================================================================
+   Formatting: live preview under each text box
+   The textarea's own text is transparent; a styled copy of the same text sits
+   underneath. Courier keeps bold/italic the same width, so both layers line up.
+   =================================================================== */
+.st-text-wrap { position: relative; min-width: 0; }
+.st-text-mirror {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+	word-wrap: break-word;
+	overflow: hidden;
+	color: var(--st-sheet-fg);
+}
+.st-root .st-sheet textarea.st-text { position: relative; z-index: 1; }
+.st-root .st-sheet textarea.st-text,
+.st-root .st-sheet textarea.st-text:hover,
+.st-root .st-sheet textarea.st-text:focus,
+.st-root .st-sheet textarea.st-text:focus-visible,
+.st-root .st-sheet textarea.st-text:active { color: transparent !important; }
+.st-root .st-sheet textarea.st-text::selection { color: transparent; background: rgba(66, 133, 244, 0.32); }
+.st-block-line.has-panel-label > .st-label { z-index: 2; }
+
+.st-md { color: var(--st-sheet-muted); opacity: 0.55; font-weight: normal; font-style: normal; text-decoration: none; }
+.st-b { font-weight: 700; }
+.st-i { font-style: italic; }
+.st-u { text-decoration: underline; text-underline-offset: 2px; }
+.st-mark { background: var(--st-hl-yellow); border-radius: 2px; }
+
+/* the bar that pops up over a text selection */
+.st-root { position: relative; }
+.st-format-bar {
+	position: absolute;
+	z-index: 30;
+	display: none;
+	gap: 2px;
+	padding: 4px;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+}
+.st-format-bar.is-visible { display: flex; animation: st-pop 120ms var(--st-ease); }
+@keyframes st-pop { from { opacity: 0; transform: translateY(4px) scale(0.96); } }
+.st-root button.st-format-btn {
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	background: none;
+	box-shadow: none;
+	border: none;
+	border-radius: 6px;
+	color: var(--text-normal);
+}
+.st-root button.st-format-btn:hover { background: var(--background-modifier-hover); }
+.st-root button.st-format-btn.is-active { background: rgba(66, 133, 244, 0.18); color: var(--interactive-accent); }
+.st-format-btn svg { width: 16px; height: 16px; }
+
+/* ===================================================================
+   Feedback & targets
+   =================================================================== */
+/* save status: green = saved, amber = edited, pulsing while writing */
+.st-save-state {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin-left: 10px;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+.st-save-state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #3fb950; transition: background-color 200ms; }
+.st-save-state[data-state="dirty"]::before { background: #d29922; }
+.st-save-state[data-state="saving"]::before { background: #d29922; animation: st-blink 700ms ease-in-out infinite alternate; }
+@keyframes st-blink { to { opacity: 0.3; } }
+
+/* undo/redo look unavailable when there's nothing to undo/redo */
+.st-root button.st-icon-btn:disabled,
+.st-root button.st-icon-btn.is-disabled { opacity: 0.25; cursor: default; background: none; }
+
+/* bigger toolbar and drag targets (Fitts's law) */
+.st-toolbar { gap: 2px; }
+.st-root .st-toolbar button.st-icon-btn {
+	min-width: 32px;
+	min-height: 32px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: 6px;
+}
+.st-handle { padding: 4px 2px; margin: -4px 0; border-radius: 4px; }
+.st-handle:hover { background: rgba(127, 127, 127, 0.15); }
+.st-root .st-quick-add button { padding: 3px 10px; font-size: 12px; min-height: 24px; }
+.st-chip { min-height: 32px; }
+
+/* visible focus for keyboard users (the paper's text boxes use the coloured block bar instead) */
+.st-root button:focus-visible,
+.st-root .st-chip:focus-visible,
+.st-root .st-comment-marker:focus-visible,
+.st-root select:focus-visible,
+.st-palette input:focus-visible,
+.st-comment textarea:focus-visible {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: 2px;
+}
+
+/* Undo button inside notices (notices live outside the view) */
+.st-notice-undo {
+	margin-left: 8px;
+	padding: 2px 12px;
+	font-weight: 600;
+	cursor: pointer;
+	border-radius: 12px;
+}
+
+/* shortcuts dialog */
+.st-shortcuts-modal h4 { margin: 18px 0 6px; font-size: var(--font-ui-small); text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+.st-shortcuts-modal h4:first-child { margin-top: 0; }
+.st-shortcuts { width: 100%; border-collapse: collapse; font-size: var(--font-ui-small); }
+.st-shortcuts td { padding: 5px 8px; border-bottom: 1px solid var(--background-modifier-border); vertical-align: top; }
+.st-shortcuts td:first-child { width: 45%; white-space: nowrap; }
+.st-shortcuts kbd {
+	font-family: var(--font-monospace);
+	font-size: 11px;
+	padding: 1px 6px;
+	border: 1px solid var(--background-modifier-border);
+	border-bottom-width: 2px;
+	border-radius: 4px;
+	background: var(--background-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.st-format-bar.is-visible, .st-save-state::before { animation: none !important; }
+}
+.st-root:focus { outline: none; }
+
+/* ===================================================================
+   Edit | Read mode switch
+   =================================================================== */
+.st-mode-switch {
+	display: inline-flex;
+	padding: 2px;
+	gap: 2px;
+	border-radius: 8px;
+	background: var(--background-modifier-hover);
+}
+.st-root button.st-mode-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 28px;
+	padding: 0 12px;
+	border: none;
+	border-radius: 6px;
+	background: none;
+	box-shadow: none;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	transition: background-color 150ms, color 150ms;
+}
+.st-root button.st-mode-btn:hover { color: var(--text-normal); }
+.st-root button.st-mode-btn.is-active {
+	background: var(--background-primary);
+	color: var(--text-normal);
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+.st-mode-btn svg { width: 15px; height: 15px; }
+
+/* ===================================================================
+   Read mode: the script as it prints, one sheet per comic page
+   =================================================================== */
+.st-read { flex-direction: column; align-items: center; gap: 28px; }
+.st-root .st-read .st-sheet { flex: none; width: 8.5in; max-width: 100%; min-height: 11in; }
+.st-read .st-r-p { margin-top: 1em; white-space: pre-wrap; overflow-wrap: break-word; }
+.st-read .st-r-title { margin-top: 0; font-weight: bold; }
+.st-read .st-r-dialogue { display: grid; grid-template-columns: minmax(2in, max-content) minmax(0, 1fr); }
+.st-read .st-r-who { padding-right: 1ch; white-space: nowrap; }
+.st-read [data-id] { cursor: text; border-radius: 2px; }
+.st-read .st-r-empty { color: var(--st-sheet-muted); }
+.st-read-hint { font-size: var(--font-ui-smaller); color: var(--text-faint); padding-bottom: 8px; user-select: none; }
+.st-root.is-reading .st-script { padding-top: 28px; }
+
+@keyframes st-mode-enter { from { opacity: 0; } }
+.st-mode-enter { animation: st-mode-enter 180ms ease-out; }
+
+@container (max-width: 900px) {
+	.st-root .st-read .st-sheet { min-height: 0; }
+	.st-read .st-r-dialogue { grid-template-columns: minmax(1.4in, max-content) minmax(0, 1fr); }
+}
+
+/* ===================================================================
+   Help: floating "?" button and the help window
+   =================================================================== */
+.st-root button.st-help-fab {
+	position: absolute;
+	right: 18px;
+	bottom: 18px;
+	z-index: 25;
+	width: 40px;
+	height: 40px;
+	padding: 0;
+	border-radius: 50%;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent, #fff);
+	border: none;
+	box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+	cursor: pointer;
+	opacity: 0.85;
+	transition: transform 150ms var(--st-ease), opacity 150ms, box-shadow 150ms;
+}
+.st-root button.st-help-fab:hover { opacity: 1; transform: scale(1.08); box-shadow: 0 5px 14px rgba(0, 0, 0, 0.35); }
+.st-help-fab svg { width: 22px; height: 22px; }
+/* keep clear of the pinned/revisions panel when it's open */
+.st-root:not(.is-reading) .st-body:not(.st-no-side) ~ .st-help-fab { right: 298px; }
+
+.st-help-modal { width: min(640px, 92vw); }
+.st-help-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--background-modifier-border); margin-bottom: 14px; }
+.st-help-modal button.st-help-tab {
+	background: none;
+	box-shadow: none;
+	border: none;
+	border-bottom: 2px solid transparent;
+	border-radius: 0;
+	padding: 8px 12px;
+	height: auto;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+.st-help-modal button.st-help-tab:hover { color: var(--text-normal); }
+.st-help-modal button.st-help-tab.is-active { color: var(--text-normal); border-bottom-color: var(--interactive-accent); }
+.st-help-body { max-height: 60vh; overflow-y: auto; padding-right: 4px; }
+.st-help-steps { margin: 0; padding-left: 0; list-style: none; counter-reset: step; }
+.st-help-steps li { counter-increment: step; position: relative; padding: 0 0 14px 40px; }
+.st-help-steps li::before {
+	content: counter(step);
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 26px;
+	height: 26px;
+	border-radius: 50%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent, #fff);
+	font-size: 13px;
+	font-weight: 600;
+}
+.st-help-step-title { font-weight: 600; margin-bottom: 2px; }
+.st-help-step-text { color: var(--text-muted); font-size: var(--font-ui-small); line-height: 1.5; }
+.st-help-tip { padding: 10px 0; border-bottom: 1px solid var(--background-modifier-border); }
+.st-help-tip:last-child { border-bottom: none; }
+.st-help-body h4 { margin: 18px 0 6px; font-size: var(--font-ui-small); text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+.st-help-body h4:first-child { margin-top: 0; }

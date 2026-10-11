@@ -22,7 +22,8 @@ import {
 	wordCount,
 } from "./doc";
 import { MAX_PALETTE, MIN_PALETTE, VIEW_TYPE_COMIC, WIDE_PALETTE } from "./defaults";
-import { BlockTypeModal, ConfirmModal, PromptModal } from "./modals";
+import { BlockTypeModal, ConfirmModal, HelpModal, HelpTab, PromptModal } from "./modals";
+import { Marker, parseInline, renderInline, toggleMarker } from "./format";
 import { animateRender, capturePositions, motionAllowed, playOnce } from "./motion";
 import { ensureSections, moveToSection, newSection, presetKey, typeKey } from "./palette";
 import { Block, BlockPreset, BlockType, ComicDoc, HIGHLIGHT_COLORS, ItemKind, ItemRef, Page, PaletteSection, Panel, PaperMode, SideNote } from "./types";
@@ -77,6 +78,22 @@ export class ComicView extends TextFileView {
 	private narrow = false;
 	private paletteOpen = true;
 	private paletteWide = false;
+	/** Read mode: the finished script, laid out like the Word export, with no editing chrome. */
+	private readMode = false;
+
+	// Formatting: live preview layers, and the bar that appears over a text selection.
+	private mirrors = new WeakMap<HTMLTextAreaElement, HTMLElement>();
+	private formatBar: HTMLElement | null = null;
+	private formatTarget: HTMLTextAreaElement | null = null;
+	/** After a re-render, focus this field inside the focused item instead of its first field. */
+	private focusSelector: string | null = null;
+	private focusCaret: number | null = null;
+
+	// Status feedback.
+	private saveState: "saved" | "dirty" | "saving" = "saved";
+	private saveEl: HTMLElement | null = null;
+	private undoBtn: HTMLButtonElement | null = null;
+	private redoBtn: HTMLButtonElement | null = null;
 
 	// Motion: what was on screen last render, and where, so only changes animate.
 	private shownItems: Set<string> | null = null;
@@ -109,6 +126,49 @@ export class ComicView extends TextFileView {
 	constructor(leaf: WorkspaceLeaf, private plugin: StorytellerPlugin) {
 		super(leaf);
 		this.doc = newDoc(plugin.settings, "Untitled");
+		// Show "Edited" as soon as anything changes; Obsidian saves a moment later.
+		const debounced = this.requestSave;
+		this.requestSave = () => {
+			this.setSaveState("dirty");
+			debounced.call(this);
+		};
+	}
+
+	async save(clear?: boolean) {
+		this.setSaveState("saving");
+		await super.save(clear);
+		this.setSaveState("saved");
+	}
+
+	private setSaveState(state: "saved" | "dirty" | "saving") {
+		this.saveState = state;
+		const el = this.saveEl;
+		if (!el) return;
+		el.setText(state === "saved" ? "Saved" : state === "saving" ? "Saving…" : "Edited");
+		el.dataset.state = state;
+		el.setAttr("aria-label", state === "saved" ? "All changes saved to the file" : "Changes will be saved in a moment");
+	}
+
+	private updateHistoryButtons() {
+		this.undoBtn?.toggleClass("is-disabled", !this.undoStack.length);
+		this.redoBtn?.toggleClass("is-disabled", !this.redoStack.length);
+		if (this.undoBtn) this.undoBtn.disabled = !this.undoStack.length;
+		if (this.redoBtn) this.redoBtn.disabled = !this.redoStack.length;
+	}
+
+	/** A notice with an Undo button: deleting is quick, and so is taking it back. */
+	private undoNotice(message: string) {
+		const frag = document.createDocumentFragment();
+		frag.append(document.createTextNode(message + "  "));
+		const btn = document.createElement("button");
+		btn.className = "st-notice-undo";
+		btn.textContent = "Undo";
+		btn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			this.undo();
+		});
+		frag.append(btn);
+		new Notice(frag, 7000);
 	}
 
 	getViewType() {
@@ -184,6 +244,9 @@ export class ComicView extends TextFileView {
 
 	async onOpen() {
 		this.contentEl.addClass("st-root");
+		// Focusable itself, so leaving a field (Esc) or clicking empty space keeps keyboard
+		// shortcuts (Ctrl+Z, Ctrl+/) inside this view instead of losing them to the page.
+		this.contentEl.tabIndex = -1;
 		this.contentEl.addEventListener("keydown", (e) => this.onKeydown(e));
 		this.registerDomEvent(window, "dragend", () => this.endDrag());
 		// Obsidian's light/dark switch: Auto paper recolours via CSS; keep the sun/moon icon in step.
@@ -221,6 +284,7 @@ export class ComicView extends TextFileView {
 		this.undoStack.push(JSON.stringify(this.doc));
 		if (this.undoStack.length > MAX_UNDO) this.undoStack.shift();
 		this.redoStack = [];
+		this.updateHistoryButtons();
 	}
 
 	/** Runs a change to the document, records undo, saves and re-renders. */
@@ -262,6 +326,7 @@ export class ComicView extends TextFileView {
 		this.redoStack.push(JSON.stringify(this.doc));
 		this.capture();
 		this.doc = JSON.parse(prev);
+		this.hideFormatBar();
 		this.requestSave();
 		this.renderAll();
 	}
@@ -276,9 +341,140 @@ export class ComicView extends TextFileView {
 		this.renderAll();
 	}
 
+	toggleReadMode() {
+		this.setReadMode(!this.readMode);
+	}
+
+	/**
+	 * Switches between editing and reading, keeping the same part of the script on screen.
+	 * `focusId` (from double-clicking a line while reading) opens that item for editing.
+	 */
+	setReadMode(on: boolean, focusId?: string) {
+		if (this.readMode === on) return;
+		const anchor = this.topVisibleItem();
+		this.readMode = on;
+		this.hideFormatBar();
+		this.draftTarget = null;
+		this.editingNote = null;
+		// A different layout: don't glide items between the two.
+		this.shownItems = null;
+		this.flipFrom = null;
+		if (focusId) this.focusAfterRender = focusId;
+		this.renderAll();
+		const canvas = this.scriptEl.querySelector<HTMLElement>(".st-canvas");
+		if (canvas && this.motion) playOnce(canvas, "st-mode-enter");
+		if (focusId) this.jumpTo(focusId);
+		else if (anchor) this.restoreAnchor(anchor);
+		if (on) this.contentEl.focus({ preventScroll: true });
+	}
+
+	/** The first page/panel/block whose top is on screen, and how far down the view it sits. */
+	private topVisibleItem(): { id: string; offset: number } | null {
+		if (!this.scriptEl) return null;
+		const top = this.scriptEl.getBoundingClientRect().top;
+		for (const el of Array.from(this.scriptEl.querySelectorAll<HTMLElement>(".st-sheet [data-id]"))) {
+			const r = el.getBoundingClientRect();
+			if (r.top >= top - 2) return { id: el.dataset.id!, offset: r.top - top };
+		}
+		return null;
+	}
+
+	private restoreAnchor(anchor: { id: string; offset: number }) {
+		const el = this.scriptEl.querySelector<HTMLElement>(`.st-sheet [data-id="${anchor.id}"]`);
+		if (!el) return;
+		const top = this.scriptEl.getBoundingClientRect().top;
+		this.scriptEl.scrollTop += el.getBoundingClientRect().top - top - anchor.offset;
+	}
+
+	/**
+	 * Read mode: the script as it will print, one sheet per comic page (like the .docx),
+	 * formatting shown without its ** markers, empty blocks and all editing chrome left out.
+	 */
+	private renderRead() {
+		const s = this.plugin.settings;
+		const canvas = this.scriptEl.createDiv("st-canvas st-read");
+		const balloons = balloonNumbers(this.doc, s, s.balloonScope);
+		let sheet = canvas.createDiv("st-sheet st-read-sheet");
+		sheet.createDiv({ cls: "st-r-p st-r-title", text: (this.doc.title || "Untitled").toUpperCase() });
+		if (this.doc.byline.trim()) sheet.createDiv({ cls: "st-r-p", text: this.doc.byline.trim() });
+
+		this.doc.pages.forEach((page, pi) => {
+			if (pi > 0 && s.exportPageBreaks) sheet = canvas.createDiv("st-sheet st-read-sheet");
+			const pageEl = sheet.createDiv({ cls: "st-r-page", attr: { "data-id": page.id } });
+			pageEl.createDiv({ cls: "st-r-p st-b", text: pageLabel(pi, s.pageNumberStyle) });
+
+			page.panels.forEach((panel, ni) => {
+				const panelEl = pageEl.createDiv({ cls: "st-r-panel", attr: { "data-id": panel.id } });
+				const blocks = [...panel.blocks];
+				const first = blocks[0] && findType(s, blocks[0].typeId).style === "description" ? blocks.shift()! : null;
+				const line = panelEl.createDiv({ cls: "st-r-p", attr: first ? { "data-id": first.id } : {} });
+				line.createSpan({ cls: "st-b", text: panelLabel(ni) + "  " });
+				if (first) this.readInline(line, first.text);
+
+				for (const b of blocks) {
+					const type = findType(s, b.typeId);
+					if (type.style === "lettering") {
+						const n = balloons.get(b.id);
+						const speaker = (type.fixedSpeaker ? type.defaultSpeaker || type.name : b.speaker || type.defaultSpeaker || type.name).toUpperCase();
+						const mod = b.modifier.trim() ? ` (${b.modifier.trim()})` : "";
+						const row = panelEl.createDiv({ cls: "st-r-p st-r-dialogue", attr: { "data-id": b.id } });
+						row.createDiv({ cls: "st-r-who", text: `${n !== undefined ? n + ". " : ""}${speaker}${mod}:` });
+						this.readInline(row.createDiv("st-r-line"), b.text);
+					} else if (b.text.trim()) {
+						this.readInline(panelEl.createDiv({ cls: "st-r-p", attr: { "data-id": b.id } }), b.text);
+					}
+				}
+			});
+		});
+		if (!this.doc.pages.length) sheet.createDiv({ cls: "st-r-p st-r-empty", text: "Nothing to read yet. Switch to Edit to start writing." });
+		canvas.createDiv({ cls: "st-read-hint", text: "Double-click any line to edit it · Ctrl+E switches modes" });
+
+		// Direct manipulation: double-click what you want to change.
+		canvas.addEventListener("dblclick", (e) => {
+			const el = (e.target as HTMLElement).closest<HTMLElement>("[data-id]");
+			window.getSelection()?.removeAllRanges();
+			this.setReadMode(false, el?.dataset.id);
+		});
+	}
+
+	/** Formatted text with its markers dropped, as it appears in the export. */
+	private readInline(parent: HTMLElement, text: string) {
+		for (const seg of parseInline(text)) {
+			if (seg.marker) continue;
+			if (!seg.bold && !seg.italic && !seg.underline && !seg.highlight) {
+				parent.appendText(seg.text);
+				continue;
+			}
+			const span = parent.createSpan({ text: seg.text });
+			if (seg.bold) span.addClass("st-b");
+			if (seg.italic) span.addClass("st-i");
+			if (seg.underline) span.addClass("st-u");
+			if (seg.highlight) span.addClass("st-mark");
+		}
+	}
+
+	showHelp(tab: HelpTab = "start") {
+		new HelpModal(this.app, tab).open();
+	}
+
 	private onKeydown(e: KeyboardEvent) {
 		const mod = e.ctrlKey || e.metaKey;
+		// "?" opens help, as in most apps, unless you're typing.
+		const typing = (e.target as HTMLElement).closest("input, textarea, select, [contenteditable]");
+		if (e.key === "?" && !mod && !e.altKey && !typing) {
+			e.preventDefault();
+			return this.showHelp();
+		}
 		if (!mod) return;
+		if (e.key === "/") {
+			e.preventDefault();
+			return this.showHelp("shortcuts");
+		}
+		if (e.key.toLowerCase() === "e" && !e.shiftKey && !e.altKey) {
+			e.preventDefault();
+			e.stopPropagation();
+			return this.setReadMode(!this.readMode);
+		}
 		const target = e.target as HTMLElement;
 		const inField = target.tagName === "TEXTAREA" || target.tagName === "INPUT";
 		const key = e.key.toLowerCase();
@@ -311,28 +507,41 @@ export class ComicView extends TextFileView {
 			return;
 		}
 
+		const reading = this.readMode;
+		root.toggleClass("is-reading", reading);
 		this.renderToolbar(root.createDiv("st-toolbar"));
 		const body = root.createDiv("st-body");
-		body.toggleClass("st-no-palette", !this.paletteOpen);
-		body.toggleClass("st-no-side", !this.sideOpen);
+		body.toggleClass("st-no-palette", reading || !this.paletteOpen);
+		body.toggleClass("st-no-side", reading || !this.sideOpen);
 		body.style.setProperty("--st-palette-w", this.plugin.settings.paletteWidth + "px");
 		this.paletteEl = body.createDiv("st-palette");
 		this.wirePaletteDrop(this.paletteEl);
-		if (this.paletteOpen) this.makeResizer(body);
+		if (this.paletteOpen && !reading) this.makeResizer(body);
 		this.scriptEl = body.createDiv("st-script");
 		this.wireScriptDrop(this.scriptEl);
+		this.wireFieldKeys(this.scriptEl);
+		this.scriptEl.addEventListener("scroll", () => this.hideFormatBar(), { passive: true });
 		this.sideEl = body.createDiv("st-side");
+
+		// Always-visible help, bottom-right, in both modes.
+		const help = root.createEl("button", { cls: "st-help-fab", attr: { "aria-label": "Help, shortcuts and tips (?)", "data-tooltip-position": "left" } });
+		setIcon(help, "help-circle");
+		help.addEventListener("click", () => this.showHelp());
 
 		this.datalistEl = root.createEl("datalist", { attr: { id: this.datalistId } });
 		this.refreshSpeakers();
 
-		this.renderPalette();
-		this.renderScript();
-		this.renderSide();
+		if (reading) {
+			this.renderRead();
+		} else {
+			this.renderPalette();
+			this.renderScript();
+			this.renderSide();
+		}
 		this.scriptEl.scrollTop = scrollTop;
 		this.updateStats();
 		// Size text areas now (batched) so items are measured at their real height.
-		if (this.contentEl.isConnected) {
+		if (this.contentEl.isConnected && !reading) {
 			this.autosizeAll();
 			this.animateScript();
 		}
@@ -341,9 +550,14 @@ export class ComicView extends TextFileView {
 			this.autosizeAll();
 			this.layoutMargin();
 			if (this.focusAfterRender) {
-				const el = this.scriptEl.querySelector<HTMLElement>(`[data-id="${this.focusAfterRender}"] .st-focus-first`);
+				const sel = this.focusSelector ?? ".st-focus-first";
+				const item = this.scriptEl.querySelector<HTMLElement>(`[data-id="${this.focusAfterRender}"]`);
+				const el = item?.querySelector<HTMLInputElement | HTMLTextAreaElement>(sel) ?? item?.querySelector<HTMLElement>(".st-focus-first");
 				el?.focus();
+				if ((el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) && this.focusCaret !== null) el.setSelectionRange(this.focusCaret, this.focusCaret);
 				this.focusAfterRender = null;
+				this.focusSelector = null;
+				this.focusCaret = null;
 			}
 			if (this.draftTarget) this.marginEl?.querySelector<HTMLTextAreaElement>(".st-comment-draft textarea")?.focus();
 			else if (this.editingNote) this.marginEl?.querySelector<HTMLTextAreaElement>(".st-comment.is-editing textarea")?.focus();
@@ -352,7 +566,7 @@ export class ComicView extends TextFileView {
 
 	/** Redraws the script and side panel but leaves the palette alone (keeps focus in palette editors). */
 	refreshScript() {
-		if (this.loadError !== null || !this.scriptEl) return this.renderAll();
+		if (this.loadError !== null || !this.scriptEl || this.readMode) return this.renderAll();
 		const scrollTop = this.scriptEl.scrollTop;
 		this.scriptEl.empty();
 		this.sideEl.empty();
@@ -391,21 +605,42 @@ export class ComicView extends TextFileView {
 	}
 
 	private renderToolbar(bar: HTMLElement) {
-		this.iconBtn(bar, "layout-list", "Toggle block palette", () => {
-			this.paletteOpen = !this.paletteOpen;
-			this.renderAll();
-		}, this.paletteOpen ? "is-active" : "");
+		// The current mode is always visible, and one click away from the other.
+		const modes = bar.createDiv({ cls: "st-mode-switch", attr: { role: "radiogroup", "aria-label": "Mode" } });
+		const modeBtn = (read: boolean, icon: string, label: string) => {
+			const b = modes.createEl("button", { cls: "st-mode-btn", attr: { role: "radio", "aria-checked": String(this.readMode === read), "aria-label": `${label} mode (Ctrl+E to switch)` } });
+			setIcon(b.createSpan(), icon);
+			b.createSpan({ text: label });
+			b.toggleClass("is-active", this.readMode === read);
+			b.addEventListener("click", () => this.setReadMode(read));
+		};
+		modeBtn(false, "pencil", "Edit");
+		modeBtn(true, "book-open", "Read");
 		bar.createDiv({ cls: "st-toolbar-sep" });
-		this.iconBtn(bar, "file-plus", "Add page", () => this.addPage());
-		this.iconBtn(bar, "chevrons-down-up", "Collapse all pages", () => this.setAllCollapsed(true));
-		this.iconBtn(bar, "chevrons-up-down", "Expand all", () => this.setAllCollapsed(false));
-		bar.createDiv({ cls: "st-toolbar-sep" });
-		this.iconBtn(bar, "undo-2", "Undo (Ctrl+Z)", () => this.undo());
-		this.iconBtn(bar, "redo-2", "Redo (Ctrl+Shift+Z)", () => this.redo());
+
+		if (this.readMode) {
+			this.undoBtn = null;
+			this.redoBtn = null;
+		} else {
+			this.iconBtn(bar, "layout-list", "Toggle block palette", () => {
+				this.paletteOpen = !this.paletteOpen;
+				this.renderAll();
+			}, this.paletteOpen ? "is-active" : "");
+			bar.createDiv({ cls: "st-toolbar-sep" });
+			this.iconBtn(bar, "file-plus", "Add page", () => this.addPage());
+			this.iconBtn(bar, "chevrons-down-up", "Collapse all pages", () => this.setAllCollapsed(true));
+			this.iconBtn(bar, "chevrons-up-down", "Expand all", () => this.setAllCollapsed(false));
+			bar.createDiv({ cls: "st-toolbar-sep" });
+			this.undoBtn = this.iconBtn(bar, "undo-2", "Undo (Ctrl+Z)", () => this.undo());
+			this.redoBtn = this.iconBtn(bar, "redo-2", "Redo (Ctrl+Shift+Z)", () => this.redo());
+			this.updateHistoryButtons();
+		}
+		this.saveEl = bar.createDiv({ cls: "st-save-state" });
+		this.setSaveState(this.saveState);
 		this.statsEl = bar.createDiv("st-stats");
 
 		const open = this.openNoteCount();
-		const cb = this.iconBtn(bar, "message-square", "Comments", (e) => {
+		const cb = this.readMode ? null : this.iconBtn(bar, "message-square", "Comments", (e) => {
 			const menu = new Menu();
 			menu.addItem((i) =>
 				i.setTitle(this.marginOpen ? "Collapse comment margin" : "Expand comment margin").setIcon(this.marginOpen ? "chevrons-right" : "chevrons-left").onClick(() => {
@@ -422,15 +657,18 @@ export class ComicView extends TextFileView {
 			);
 			menu.showAtMouseEvent(e);
 		}, "st-comments-toggle" + (this.marginOpen && open ? " is-active" : ""));
-		if (open) cb.createSpan({ cls: "st-count", text: String(open) });
+		if (open && cb) cb.createSpan({ cls: "st-count", text: String(open) });
 
 		this.paperToggle(bar);
+
 		const exp = bar.createEl("button", { cls: "st-export-btn mod-cta", text: "Export .docx" });
 		exp.addEventListener("click", () => this.plugin.exportView(this));
-		this.iconBtn(bar, "panel-right", "Pinned & revisions", () => {
-			this.sideOpen = !this.sideOpen;
-			this.renderAll();
-		}, this.sideOpen ? "is-active" : "");
+		if (!this.readMode) {
+			this.iconBtn(bar, "panel-right", "Pinned & revisions", () => {
+				this.sideOpen = !this.sideOpen;
+				this.renderAll();
+			}, this.sideOpen ? "is-active" : "");
+		}
 	}
 
 	/** Is the paper currently dark (explicitly, or via Auto + Obsidian's dark theme)? */
@@ -896,7 +1134,16 @@ export class ComicView extends TextFileView {
 	}
 
 	private paletteChip(parent: HTMLElement, label: string, color: string, payload: DragPayload, onClick: () => void, icon?: string): HTMLElement {
-		const chip = parent.createDiv({ cls: "st-chip", attr: { draggable: "true", "data-drag-item": "" } });
+		const chip = parent.createDiv({
+			cls: "st-chip",
+			attr: { draggable: "true", "data-drag-item": "", tabindex: "0", role: "button", "aria-label": `Add ${label} (or drag into the script)` },
+		});
+		chip.addEventListener("keydown", (e) => {
+			if (e.key === "Enter" || e.key === " ") {
+				e.preventDefault();
+				onClick();
+			}
+		});
 		chip.style.setProperty("--st-type-color", color);
 		if (icon) setIcon(chip.createSpan("st-chip-icon"), icon);
 		else chip.createSpan("st-chip-dot");
@@ -1135,21 +1382,24 @@ export class ComicView extends TextFileView {
 				});
 			}
 			label.createSpan({ cls: "st-colon", text: ":" });
-			ta = line.createEl("textarea", { cls: "st-text" + (type.fixedSpeaker ? " st-focus-first" : ""), attr: { rows: "1", placeholder: type.name + "…" } });
+			ta = this.richText(line, "st-text" + (type.fixedSpeaker ? " st-focus-first" : ""), type.name + "…");
 		} else {
 			if (panelLabelEl) {
 				line.appendChild(panelLabelEl);
 				line.addClass("has-panel-label");
 			}
-			ta = line.createEl("textarea", { cls: "st-text st-focus-first", attr: { rows: "1", placeholder: "Describe the panel…" } });
+			ta = this.richText(line, "st-text st-focus-first", "Describe the panel…");
 			if (panelLabelEl) {
 				// The label sits over the first line; indent the text past it so wrapped lines return to the margin.
-				ta.style.textIndent = panelLabel(ref.panelIndex!).length + 2 + "ch";
+				const indent = panelLabel(ref.panelIndex!).length + 2 + "ch";
+				ta.style.textIndent = indent;
+				this.mirrors.get(ta)!.style.textIndent = indent;
 			}
 		}
 
 		ta.value = block.text;
 		ta.readOnly = locked;
+		renderInline(this.mirrors.get(ta)!, ta.value);
 		this.bindText(ta, (v) => {
 			block.text = v;
 			this.updatePanelCount(panel);
@@ -1159,10 +1409,239 @@ export class ComicView extends TextFileView {
 			this.queueLayout();
 		});
 		ta.addEventListener("keydown", (e) => {
-			if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !isLocked(ref)) {
+			const mod = e.ctrlKey || e.metaKey;
+			if (mod && e.key === "Enter" && !isLocked(ref)) {
 				e.preventDefault();
 				e.shiftKey ? this.insertPanelAfter(ref) : this.insertBlockAfter(ref, type.id);
+				return;
 			}
+			const marker = this.shortcutMarker(e);
+			if (marker) {
+				e.preventDefault();
+				e.stopPropagation();
+				this.applyFormat(ta, marker);
+			}
+		});
+	}
+
+	/** Ctrl+B / Ctrl+I / Ctrl+U / Ctrl+Shift+H → the marker to toggle. */
+	private shortcutMarker(e: KeyboardEvent): Marker | null {
+		if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
+		const k = e.key.toLowerCase();
+		if (!e.shiftKey && k === "b") return "**";
+		if (!e.shiftKey && k === "i") return "*";
+		if (!e.shiftKey && k === "u") return "__";
+		if (e.shiftKey && k === "h") return "==";
+		return null;
+	}
+
+	/**
+	 * A textarea with a styled copy of its text underneath, so bold, italic, underline and
+	 * highlights show while typing. The textarea's own text is transparent; the font is
+	 * monospaced (bold and italic keep the same width), so both layers line up exactly.
+	 */
+	private richText(parent: HTMLElement, cls: string, placeholder: string): HTMLTextAreaElement {
+		const wrap = parent.createDiv("st-text-wrap");
+		const mirror = wrap.createDiv({ cls: "st-text-mirror", attr: { "aria-hidden": "true" } });
+		const ta = wrap.createEl("textarea", { cls, attr: { rows: "1", placeholder } });
+		this.mirrors.set(ta, mirror);
+		ta.addEventListener("input", () => {
+			renderInline(mirror, ta.value);
+			if (this.formatTarget === ta) this.positionFormatBar();
+		});
+		const check = () => window.setTimeout(() => this.updateFormatBar(ta), 0);
+		ta.addEventListener("select", check);
+		ta.addEventListener("mouseup", check);
+		ta.addEventListener("keyup", (e) => {
+			if (e.key.startsWith("Arrow") || e.key === "Shift" || e.key === "Home" || e.key === "End" || (e.key === "a" && (e.ctrlKey || e.metaKey))) check();
+		});
+		ta.addEventListener("blur", () => window.setTimeout(() => {
+			if (this.formatTarget === ta && document.activeElement !== ta) this.hideFormatBar();
+		}, 0));
+		return ta;
+	}
+
+	// ---------------------------------------------------------------- formatting
+
+	/** Toggles a marker around the selection. Uses insertText so Ctrl+Z inside the field undoes it. */
+	private applyFormat(ta: HTMLTextAreaElement, marker: Marker) {
+		if (ta.readOnly) return new Notice("This block is locked.");
+		const value = ta.value;
+		const edit = toggleMarker(value, ta.selectionStart, ta.selectionEnd, marker);
+		const expected = value.slice(0, edit.from) + edit.insert + value.slice(edit.to);
+		ta.focus();
+		ta.setSelectionRange(edit.from, edit.to);
+		let ok = false;
+		try {
+			ok = document.execCommand("insertText", false, edit.insert);
+		} catch {
+			ok = false;
+		}
+		if (!ok || ta.value !== expected) {
+			ta.value = expected;
+			ta.dispatchEvent(new Event("input", { bubbles: true }));
+		}
+		ta.setSelectionRange(edit.selStart, edit.selEnd);
+		this.updateFormatBar(ta);
+	}
+
+	private updateFormatBar(ta: HTMLTextAreaElement) {
+		if (document.activeElement !== ta || ta.readOnly || ta.selectionStart === ta.selectionEnd) {
+			if (this.formatTarget === ta) this.hideFormatBar();
+			return;
+		}
+		this.formatTarget = ta;
+		const bar = (this.formatBar ??= this.buildFormatBar());
+		if (bar.parentElement !== this.contentEl) this.contentEl.appendChild(bar);
+		// Show which styles the selection already has (the button would remove them).
+		bar.querySelectorAll<HTMLElement>("[data-marker]").forEach((b) => {
+			const m = b.dataset.marker as Marker;
+			const edit = toggleMarker(ta.value, ta.selectionStart, ta.selectionEnd, m);
+			b.toggleClass("is-active", edit.insert.length < edit.to - edit.from);
+		});
+		bar.addClass("is-visible");
+		this.positionFormatBar();
+	}
+
+	private buildFormatBar(): HTMLElement {
+		const bar = createDiv({ cls: "st-format-bar", attr: { role: "toolbar", "aria-label": "Text formatting" } });
+		const buttons: [Marker, string, string, string][] = [
+			["**", "bold", "Bold", "Ctrl+B"],
+			["*", "italic", "Italic", "Ctrl+I"],
+			["__", "underline", "Underline", "Ctrl+U"],
+			["==", "highlighter", "Highlight", "Ctrl+Shift+H"],
+		];
+		for (const [marker, icon, name, keys] of buttons) {
+			const b = bar.createEl("button", { cls: "st-format-btn", attr: { "aria-label": `${name} (${keys})`, "data-marker": marker } });
+			setIcon(b, icon);
+			// Keep the text selected: don't let the button take focus.
+			b.addEventListener("mousedown", (e) => e.preventDefault());
+			b.addEventListener("click", () => this.formatTarget && this.applyFormat(this.formatTarget, marker));
+		}
+		return bar;
+	}
+
+	/** Places the bar just above the start of the selection (below it near the top edge). */
+	private positionFormatBar() {
+		const bar = this.formatBar;
+		const ta = this.formatTarget;
+		if (!bar || !ta || !bar.hasClass("is-visible")) return;
+		const mirror = this.mirrors.get(ta);
+		const at = (mirror && this.offsetRect(mirror, ta.selectionStart)) || ta.getBoundingClientRect();
+		const host = this.contentEl.getBoundingClientRect();
+		const w = bar.offsetWidth;
+		const h = bar.offsetHeight;
+		let left = at.left - host.left - 6;
+		let top = at.top - host.top - h - 8;
+		if (top < 44) top = at.bottom - host.top + 8; // no room above: drop below the line
+		left = Math.max(8, Math.min(left, host.width - w - 8));
+		bar.style.left = left + "px";
+		bar.style.top = top + "px";
+	}
+
+	/** Screen position of a character offset, measured on the preview layer (same text, same layout). */
+	private offsetRect(mirror: HTMLElement, offset: number): DOMRect | null {
+		const walker = document.createTreeWalker(mirror, NodeFilter.SHOW_TEXT);
+		let node: Node | null;
+		let seen = 0;
+		while ((node = walker.nextNode())) {
+			const len = node.textContent?.length ?? 0;
+			if (offset <= seen + len) {
+				const range = document.createRange();
+				const local = offset - seen;
+				range.setStart(node, local);
+				range.setEnd(node, Math.min(local + 1, len));
+				const rects = range.getClientRects();
+				return rects[0] ?? range.getBoundingClientRect();
+			}
+			seen += len;
+		}
+		return null;
+	}
+
+	private hideFormatBar() {
+		this.formatBar?.removeClass("is-visible");
+		this.formatTarget = null;
+	}
+
+	// ---------------------------------------------------------------- keyboard flow
+
+	/**
+	 * Lets the script be written from the keyboard like a document:
+	 * ↑/↓ cross between fields at the start/end of a field, Enter leaves the title lines,
+	 * Alt+↑/↓ moves the current block, Esc leaves the field (so Ctrl+Z undoes structure).
+	 */
+	private wireFieldKeys(el: HTMLElement) {
+		el.addEventListener("keydown", (e) => {
+			const t = e.target as HTMLElement;
+			if (!t.closest(".st-sheet") || !(t instanceof HTMLTextAreaElement || t instanceof HTMLInputElement)) return;
+			const field = t as HTMLInputElement | HTMLTextAreaElement;
+			const mod = e.ctrlKey || e.metaKey;
+
+			if (e.key === "Escape") {
+				this.hideFormatBar();
+				this.contentEl.focus({ preventScroll: true });
+				return;
+			}
+			if (e.altKey && !mod && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+				const block = t.closest<HTMLElement>(".st-block");
+				if (!block) return;
+				e.preventDefault();
+				const sel = field.hasClass("st-speaker") ? "input.st-speaker" : "textarea.st-text";
+				this.moveBlockBy(block.dataset.id!, e.key === "ArrowUp" ? -1 : 1, sel, field.selectionStart ?? 0);
+				return;
+			}
+			if (mod || e.altKey || e.shiftKey) return;
+
+			const isTitle = field.hasClass("st-title") || field.hasClass("st-byline");
+			if (e.key === "Enter" && isTitle) {
+				e.preventDefault();
+				this.focusField(field, 1);
+				return;
+			}
+			// Speaker fields keep ↑/↓ for their autocomplete list.
+			if (field.hasAttribute("list")) return;
+			const collapsed = field.selectionStart === field.selectionEnd;
+			if (e.key === "ArrowDown" && collapsed && (field instanceof HTMLInputElement || field.selectionEnd === field.value.length)) {
+				if (this.focusField(field, 1)) e.preventDefault();
+			} else if (e.key === "ArrowUp" && collapsed && (field instanceof HTMLInputElement || field.selectionStart === 0)) {
+				if (this.focusField(field, -1)) e.preventDefault();
+			}
+		});
+	}
+
+	/** Moves focus to the next/previous text field on the paper. */
+	private focusField(from: HTMLElement, dir: 1 | -1): boolean {
+		const fields = Array.from(this.scriptEl.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(".st-sheet input.st-title, .st-sheet input.st-byline, .st-sheet input.st-speaker, .st-sheet textarea.st-text"));
+		const next = fields[fields.indexOf(from as HTMLInputElement) + dir];
+		if (!next) return false;
+		next.focus();
+		const pos = dir === 1 ? 0 : next.value.length;
+		next.setSelectionRange(pos, pos);
+		next.scrollIntoView({ block: "nearest" });
+		return true;
+	}
+
+	/** Alt+↑/↓: moves a block within its panel, or into the neighbouring panel at the edges. */
+	private moveBlockBy(id: string, dir: -1 | 1, fieldSelector: string, caret: number) {
+		const ref = findRef(this.doc, id);
+		if (!ref?.panel || ref.blockIndex === undefined) return;
+		if (isLocked(ref)) return new Notice("This block is locked.");
+		const blocks = ref.panel.blocks;
+		const to = ref.blockIndex + dir;
+		const panels = [...walk(this.doc)].filter((r) => r.kind === "panel" && !isLocked(r)).map((r) => r.panel!);
+		const neighbour = to < 0 || to >= blocks.length ? panels[panels.indexOf(ref.panel) + dir] : null;
+		if ((to < 0 || to >= blocks.length) && !neighbour) return;
+		this.focusAfterRender = id;
+		this.focusSelector = fieldSelector;
+		this.focusCaret = caret;
+		this.mutate(() => {
+			const [b] = blocks.splice(ref.blockIndex!, 1);
+			if (neighbour) {
+				neighbour.collapsed = false;
+				if (dir < 0) neighbour.blocks.push(b);
+				else neighbour.blocks.unshift(b);
+			} else blocks.splice(to, 0, b);
 		});
 	}
 
@@ -1275,6 +1754,7 @@ export class ComicView extends TextFileView {
 				if (this.undoStack.length > MAX_UNDO) this.undoStack.shift();
 				this.redoStack = [];
 				this.pendingSnapshot = null;
+				this.updateHistoryButtons();
 			}
 			set(el.value);
 			this.requestSave();
@@ -1496,7 +1976,7 @@ export class ComicView extends TextFileView {
 				else if (r.kind === "panel") r.page.panels.splice(r.panelIndex!, 1);
 				else r.panel!.blocks.splice(r.blockIndex!, 1);
 			});
-			new Notice(`Deleted ${r.kind}. Ctrl+Z to undo.`);
+			this.undoNotice(`Deleted ${r.kind}.`);
 		};
 		const el = this.scriptEl?.querySelector<HTMLElement>(`.st-sheet [data-id="${id}"]`);
 		if (!el || !this.motion) return commit();
@@ -1633,7 +2113,10 @@ export class ComicView extends TextFileView {
 				})
 			);
 			menu.addItem((i) => {
-				i.setTitle("Delete").setIcon("trash").onClick(() => this.mutate(() => ref.item.notes.remove(note)));
+				i.setTitle("Delete").setIcon("trash").onClick(() => {
+					this.mutate(() => ref.item.notes.remove(note));
+					this.undoNotice("Deleted comment.");
+				});
 				(i as any).setWarning?.(true);
 			});
 			menu.showAtMouseEvent(e);
@@ -2045,7 +2528,10 @@ export class ComicView extends TextFileView {
 		}
 		if (flag === "flag") {
 			const clear = body.createEl("button", { cls: "st-side-action", text: "Clear all revision marks" });
-			clear.addEventListener("click", () => this.mutate(() => refs.forEach((r) => (r.item.revision = false))));
+			clear.addEventListener("click", () => {
+				this.mutate(() => refs.forEach((r) => (r.item.revision = false)));
+				this.undoNotice(`Cleared ${refs.length} revision mark${refs.length === 1 ? "" : "s"}.`);
+			});
 		}
 	}
 }
