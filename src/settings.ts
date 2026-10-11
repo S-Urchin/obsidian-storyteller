@@ -1,6 +1,7 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type StorytellerPlugin from "./main";
 import { DEFAULT_BLOCK_TYPES, DEFAULT_SETTINGS } from "./defaults";
+import { browseForFolder, canBrowseFolders, cleanFolder, isSystemPath, vaultFolders } from "./locations";
 import { BlockTypeModal } from "./modals";
 import { BalloonScope, PageNumberStyle, PaperMode } from "./types";
 
@@ -21,6 +22,9 @@ export class StorytellerSettingTab extends PluginSettingTab {
 			if (rerender) this.render();
 		};
 		containerEl.empty();
+		// Autocomplete for every folder box below.
+		const datalist = containerEl.createEl("datalist", { attr: { id: "st-vault-folders" } });
+		for (const path of vaultFolders(this.app)) datalist.createEl("option", { attr: { value: path } });
 
 		// ---- Block types
 		new Setting(containerEl).setName("Block types").setHeading();
@@ -204,12 +208,80 @@ export class StorytellerSettingTab extends PluginSettingTab {
 				await save();
 			}));
 		toggle("Open after export", "Open the exported .docx in your computer's default app (for example Word) as soon as it's saved.", "openAfterExport");
-		new Setting(containerEl)
-			.setName("Export folder")
-			.setDesc("Vault folder for .docx files; created automatically on the first export. Leave empty to save next to each script instead.")
-			.addText((t) => t.setPlaceholder("Exported").setValue(s.exportFolder).onChange(async (v) => {
-				s.exportFolder = v.trim().replace(/^\/+|\/+$/g, "");
-				await save();
-			}));
+		this.folderList({
+			name: "Export folders",
+			desc: "Where .docx files are saved. The Export .docx button saves to the one you picked last; the arrow next to it lists them all. Use a vault folder (Exported, Comics/Drafts), leave a row empty to save next to the script, or, in the desktop app, a full path on your computer (C:\\Users\\you\\Documents or ~/Desktop). Folders are created on first use.",
+			list: s.exportFolders,
+			placeholder: "Next to the script",
+			allowSystem: true,
+			save,
+		});
+
+		// ---- New scripts
+		new Setting(containerEl).setName("New scripts").setHeading();
+		this.folderList({
+			name: "Script folders",
+			desc: "Vault folders new .comic scripts can be created in. With none, new scripts go in the current folder; with more than one, you're asked which to use. Right-clicking a folder always creates the script there.",
+			list: s.scriptFolders,
+			placeholder: "Vault root",
+			allowSystem: false,
+			save,
+		});
+	}
+
+	/** An editable list of folders: one text box per folder, plus add/browse buttons. */
+	private folderList(o: { name: string; desc: string; list: string[]; placeholder: string; allowSystem: boolean; save: (rerender?: boolean) => Promise<void> }) {
+		const { containerEl } = this;
+		new Setting(containerEl).setName(o.name).setDesc(o.desc);
+		o.list.forEach((folder, i) => {
+			const row = new Setting(containerEl).setClass("st-folder-row");
+			row.addText((t) => {
+				t.setPlaceholder(o.placeholder).setValue(folder);
+				t.inputEl.setAttr("list", "st-vault-folders");
+				t.inputEl.addClass("st-folder-input");
+				const warn = () => {
+					const bad = !o.allowSystem && isSystemPath(cleanFolder(t.getValue()));
+					t.inputEl.toggleClass("is-invalid", bad);
+					t.inputEl.title = bad ? "New scripts must go in a vault folder." : "";
+				};
+				warn();
+				t.onChange(async (v) => {
+					o.list[i] = cleanFolder(v);
+					warn();
+					await o.save();
+				});
+			});
+			row.addExtraButton((b) =>
+				b.setIcon("arrow-up").setTooltip("Move up").setDisabled(i === 0).onClick(async () => {
+					o.list.splice(i - 1, 0, o.list.splice(i, 1)[0]);
+					await o.save(true);
+				})
+			);
+			row.addExtraButton((b) =>
+				b.setIcon("trash").setTooltip("Remove").onClick(async () => {
+					o.list.splice(i, 1);
+					await o.save(true);
+				})
+			);
+		});
+		const add = new Setting(containerEl).addButton((b) =>
+			b.setButtonText("Add vault folder").onClick(async () => {
+				o.list.push(o.list.includes("") ? "New folder" : "");
+				await o.save(true);
+				// Put the cursor in the new row so it can be typed straight away.
+				const inputs = containerEl.querySelectorAll<HTMLInputElement>(".st-folder-input");
+				inputs[inputs.length - 1]?.select();
+			})
+		);
+		if (o.allowSystem && canBrowseFolders()) {
+			add.addButton((b) =>
+				b.setButtonText("Browse computer…").onClick(async () => {
+					const picked = await browseForFolder("Choose an export folder");
+					if (!picked) return;
+					o.list.push(picked);
+					await o.save(true);
+				})
+			);
+		}
 	}
 }

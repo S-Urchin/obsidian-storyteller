@@ -146,6 +146,12 @@ export interface StorytellerSettings {
 	exportHighlights: boolean;
 	exportPageBreaks: boolean;
 	exportFont: string;
-	exportFolder: string;
+	/** Where .docx files can go: vault folders, full paths on the computer, or "" for next to the script. */
+	exportFolders: string[];
+	/** Export folder chosen last time, listed first in the picker; null until one is picked. */
+	lastExportFolder: string | null;
+	/** Vault folders new scripts can be created in; empty means the current folder. */
+	scriptFolders: string[];
+	lastScriptFolder: string | null;
 	openAfterExport: boolean;
 }

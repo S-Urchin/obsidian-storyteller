@@ -9,7 +9,7 @@ export const DEFAULT_BLOCK_TYPES: BlockType[] = [
 	{ id: "freestyle", name: "Freestyle", color: "#14b8a6", style: "freestyle", numbered: false, defaultSpeaker: "", fixedSpeaker: false, defaultText: "" },
 ];
 
-export const SETTINGS_SCHEMA = 6;
+export const SETTINGS_SCHEMA = 7;
 export const EXPORT_FOLDER = "Exported";
 
 export const DEFAULT_SETTINGS: StorytellerSettings = {
@@ -33,7 +33,10 @@ export const DEFAULT_SETTINGS: StorytellerSettings = {
 	exportHighlights: true,
 	exportPageBreaks: true,
 	exportFont: "Courier New",
-	exportFolder: "Exported",
+	exportFolders: [EXPORT_FOLDER],
+	lastExportFolder: null,
+	scriptFolders: [],
+	lastScriptFolder: null,
 	openAfterExport: true,
 };
 

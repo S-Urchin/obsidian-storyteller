@@ -126,6 +126,19 @@
 .st-root button.st-comments-toggle { display: inline-flex; align-items: center; gap: 3px; }
 .st-count { font-size: 11px; font-weight: 600; }
 .st-export-btn { font-size: var(--font-ui-small); padding: 4px 12px; }
+/* Split button: "Export .docx" + an arrow that drops down the export folders. */
+.st-export-group { display: inline-flex; align-items: stretch; }
+.st-root .st-export-group button.st-export-btn { border-top-right-radius: 0; border-bottom-right-radius: 0; margin-right: 0; }
+.st-root .st-export-group button.st-export-arrow {
+	border-top-left-radius: 0;
+	border-bottom-left-radius: 0;
+	margin-left: 1px;
+	padding: 4px 6px;
+	display: inline-flex;
+	align-items: center;
+}
+.st-root .st-export-group button.st-export-arrow svg { width: 14px; height: 14px; transition: transform 120ms var(--st-ease); }
+.st-root .st-export-group button.st-export-arrow.is-open svg { transform: rotate(180deg); }
 
 /* ---------- three-column body ---------- */
 .st-body {
@@ -766,7 +779,8 @@
 	.st-root .st-margin,
 	.st-root .st-comment,
 	.st-root .st-chip,
-	.st-root .st-card { transition: none; }
+	.st-root .st-card,
+	.st-root .st-nav-line { transition: none; }
 }
 
 
@@ -1175,6 +1189,60 @@
 	flex: 0 0 auto;
 }
 .st-drop-indicator[data-kind="nav"] { margin: 0; }
+.st-nav-list { position: relative; }
+/* Where a dragged page will land: a line across the gap, with the page number it becomes. */
+.st-nav-line {
+	position: absolute;
+	left: 4px;
+	right: 4px;
+	height: 0;
+	border-top: 2px solid var(--interactive-accent);
+	pointer-events: none;
+	z-index: 2;
+	transform: translateY(-1px);
+	transition: top 80ms var(--st-ease);
+}
+.st-nav-line::before,
+.st-nav-line::after {
+	content: "";
+	position: absolute;
+	top: -5px;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--background-secondary);
+	border: 2px solid var(--interactive-accent);
+	box-sizing: border-box;
+}
+.st-nav-line::before { left: -4px; }
+.st-nav-line::after { right: -4px; }
+.st-nav-line-label {
+	position: absolute;
+	right: 10px;
+	top: -9px;
+	padding: 0 6px;
+	border-radius: 8px;
+	font-size: 10px;
+	line-height: 16px;
+	font-weight: 600;
+	white-space: nowrap;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent, #fff);
+}
+.st-nav-line.is-noop { border-top-style: dashed; border-color: var(--text-faint); }
+.st-nav-line.is-noop::before, .st-nav-line.is-noop::after { border-color: var(--text-faint); }
+.st-nav-line.is-noop .st-nav-line-label { background: var(--background-modifier-border); color: var(--text-muted); }
+.st-nav-collapsed .st-nav-line { left: 2px; right: 2px; }
+.st-nav-collapsed .st-nav-line-label { display: none; }
+
+/* Export / new-script folder picker and settings */
+.st-folder-suggestion { display: flex; align-items: baseline; gap: 8px; }
+.st-folder-last { margin-left: auto; font-size: var(--font-ui-smaller); color: var(--text-faint); }
+.st-folder-row { padding-top: 4px; padding-bottom: 4px; border-top: none; }
+.st-folder-row .setting-item-info { display: none; }
+.st-folder-row .setting-item-control { justify-content: flex-start; }
+.st-folder-row input.st-folder-input { flex: 1 1 auto; }
+.st-folder-row input.st-folder-input.is-invalid { border-color: var(--text-error); }
 
 /* ===================================================================
    Page picker ("Swap with page…", "Move to position…")

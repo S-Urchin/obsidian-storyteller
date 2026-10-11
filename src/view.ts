@@ -26,6 +26,7 @@ import { MAX_PALETTE, MIN_PALETTE, VIEW_TYPE_COMIC, WIDE_PALETTE } from "./defau
 import { BlockTypeModal, ConfirmModal, HelpModal, HelpTab, PageChoice, PagePickerModal, PromptModal } from "./modals";
 import { Marker, parseInline, renderInline, toggleMarker } from "./format";
 import { LinkSuggest, renderLinked } from "./links";
+import { exportFolderLabel, isSystemPath, shortPath } from "./locations";
 import { animateRender, capturePositions, motionAllowed, playOnce } from "./motion";
 import { ensureSections, moveToSection, newSection, presetKey, typeKey } from "./palette";
 import { Block, BlockPreset, BlockType, ComicDoc, FreeFormat, HIGHLIGHT_COLORS, ItemKind, ItemRef, Page, PaletteSection, Panel, PaperMode, SideNote } from "./types";
@@ -76,6 +77,11 @@ export class ComicView extends TextFileView {
 
 	private drag: DragPayload | null = null;
 	private indicator: HTMLElement | null = null;
+	/** Insertion line over the pages list; overlaid so the list never shifts under the pointer. */
+	private navLine: HTMLElement | null = null;
+	/** The export folder menu while it's open, and when it last closed (see exportButton). */
+	private exportMenu: Menu | null = null;
+	private exportMenuClosedAt = 0;
 
 	private narrow = false;
 	private paletteOpen = true;
@@ -450,7 +456,9 @@ export class ComicView extends TextFileView {
 			if (!this.drag || (this.drag.kind !== "page" && this.drag.kind !== "new-page")) return;
 			e.preventDefault();
 			this.setDropEffect(e);
-			this.showDropHint(list, this.dropIndex(list, e.clientY), "nav", null);
+			this.autoScrollNav(list, e.clientY);
+			this.indicator?.remove();
+			this.showNavLine(this.dropIndex(list, e.clientY));
 		});
 		list.addEventListener("drop", (e) => {
 			if (!this.drag || (this.drag.kind !== "page" && this.drag.kind !== "new-page")) return;
@@ -902,6 +910,60 @@ export class ComicView extends TextFileView {
 		return b;
 	}
 
+	/** "Export .docx" exports to the default folder; the arrow beside it lists every export folder. */
+	private exportButton(bar: HTMLElement) {
+		const group = bar.createDiv("st-export-group");
+		const exp = group.createEl("button", { cls: "st-export-btn mod-cta", text: "Export .docx" });
+		const arrow = group.createEl("button", { cls: "st-export-arrow mod-cta", attr: { "aria-label": "Choose export folder", "aria-haspopup": "menu" } });
+		setIcon(arrow, "chevron-down");
+		const describe = () => {
+			const folder = this.plugin.exportFolders()[0] ?? "";
+			exp.setAttr("aria-label", `Export to ${exportFolderLabel(folder)}`);
+		};
+		describe();
+		exp.addEventListener("click", () => {
+			void this.plugin.exportView(this, this.plugin.exportFolders()[0] ?? "").then(describe);
+		});
+		arrow.addEventListener("click", (e) => {
+			e.stopPropagation();
+			// The arrow toggles the menu. Obsidian closes an open menu on mousedown outside it, so a
+			// menu that closed a moment ago was closed by this very click: leave it closed.
+			if (this.exportMenu) return this.exportMenu.hide();
+			if (Date.now() - this.exportMenuClosedAt < 300) return;
+			const current = this.plugin.exportFolders()[0] ?? "";
+			const folders = this.plugin.exportFolders(true);
+			const menu = new Menu();
+			menu.addItem((i) => i.setTitle("Export to…").setIsLabel(true));
+			for (const folder of folders.length ? folders : [""]) {
+				menu.addItem((i) =>
+					i
+						.setTitle(isSystemPath(folder) ? shortPath(folder) : exportFolderLabel(folder))
+						.setIcon(!folder ? "file-symlink" : isSystemPath(folder) ? "hard-drive" : "folder")
+						.setChecked(folder === current)
+						.onClick(() => void this.plugin.exportView(this, folder).then(describe))
+				);
+			}
+			menu.addSeparator();
+			menu.addItem((i) =>
+				i.setTitle("Manage export folders…").setIcon("settings").onClick(() => {
+					const setting = (this.app as unknown as { setting?: { open(): void; openTabById(id: string): void } }).setting;
+					setting?.open();
+					setting?.openTabById(this.plugin.manifest.id);
+				})
+			);
+			const r = group.getBoundingClientRect();
+			arrow.addClass("is-open");
+			menu.onHide(() => {
+				arrow.removeClass("is-open");
+				this.exportMenu = null;
+				this.exportMenuClosedAt = Date.now();
+			});
+			this.exportMenu = menu;
+			// Anchored to the button's right edge so the menu opens under it, growing leftwards.
+			menu.showAtPosition({ x: r.right, y: r.bottom + 4, left: true });
+		});
+	}
+
 	private renderToolbar(bar: HTMLElement) {
 		// The current mode is always visible, and one click away from the other.
 		const modes = bar.createDiv({ cls: "st-mode-switch", attr: { role: "radiogroup", "aria-label": "Mode" } });
@@ -959,8 +1021,7 @@ export class ComicView extends TextFileView {
 
 		this.paperToggle(bar);
 
-		const exp = bar.createEl("button", { cls: "st-export-btn mod-cta", text: "Export .docx" });
-		exp.addEventListener("click", () => void this.plugin.exportView(this));
+		this.exportButton(bar);
 		if (!this.readMode) {
 			this.iconBtn(bar, "panel-right", "Pinned & revisions", () => {
 				this.sideOpen = !this.sideOpen;
@@ -2680,6 +2741,7 @@ export class ComicView extends TextFileView {
 		this.drag = null;
 		this.clearDropHint();
 		this.indicator = null;
+		this.navLine = null;
 		this.contentEl.removeClass("is-drag-active");
 		this.contentEl.querySelectorAll(".is-dragging").forEach((el) => el.removeClass("is-dragging"));
 		this.contentEl.querySelectorAll(".st-item[draggable], .st-pal-card[draggable]").forEach((el) => el.removeAttribute("draggable"));
@@ -2759,6 +2821,9 @@ export class ComicView extends TextFileView {
 			e.preventDefault();
 			this.setDropEffect(e);
 			this.showDropHint(plan.zone, plan.index, plan.kind, plan.target);
+			// Dragging a page in the script: mirror the spot in the pages list too.
+			if (plan.kind === "pages") this.showNavLine(plan.index, true);
+			else this.navLine?.remove();
 		});
 		el.addEventListener("drop", (e) => {
 			if (!this.drag) return;
@@ -2814,8 +2879,57 @@ export class ComicView extends TextFileView {
 		}
 	}
 
+	/**
+	 * Shows where a dragged page will land in the pages list: a line in the gap before page
+	 * `index`, labelled with the page number it will become. `reveal` scrolls the gap into view.
+	 */
+	private showNavLine(index: number, reveal = false) {
+		const list = this.navEl?.querySelector<HTMLElement>(".st-nav-list");
+		const p = this.drag;
+		if (!list || !p) return;
+		const items = this.zoneItems(list);
+		const line = (this.navLine ??= createDiv({ cls: "st-nav-line", attr: { "aria-hidden": "true" } }));
+		if (line.parentElement !== list) {
+			line.empty();
+			line.createSpan("st-nav-line-label");
+			list.appendChild(line);
+		}
+
+		// Middle of the gap between the neighbouring items, in the list's scrolled coordinates.
+		const prev = items[index - 1];
+		const next = items[index];
+		let top = 0;
+		if (prev && next) top = (prev.offsetTop + prev.offsetHeight + next.offsetTop) / 2;
+		else if (next) top = Math.max(next.offsetTop - 2, 1);
+		else if (prev) top = prev.offsetTop + prev.offsetHeight + 2;
+		line.setCssStyles({ top: `${Math.round(top)}px` });
+
+		// The page number it ends up as; dropping a page right where it is changes nothing.
+		const from = p.kind === "page" ? this.doc.pages.findIndex((pg) => pg.id === p.id) : -1;
+		const noop = from >= 0 && (index === from || index === from + 1);
+		const pos = from >= 0 && from < index ? index : index + 1;
+		line.toggleClass("is-noop", noop);
+		const label = line.querySelector<HTMLElement>(".st-nav-line-label");
+		if (label) label.setText(noop ? "No change" : p.kind === "new-page" ? `New page ${pos}` : `Becomes page ${pos}`);
+
+		if (reveal) {
+			const pad = 24;
+			if (top < list.scrollTop + pad) list.scrollTop = top - pad;
+			else if (top > list.scrollTop + list.clientHeight - pad) list.scrollTop = top - list.clientHeight + pad;
+		}
+	}
+
+	/** Scrolls the pages list when dragging near its top or bottom edge. */
+	private autoScrollNav(list: HTMLElement, y: number) {
+		const r = list.getBoundingClientRect();
+		const edge = Math.min(SCROLL_EDGE, r.height / 4);
+		if (y < r.top + edge) list.scrollTop -= Math.ceil((r.top + edge - y) / 3);
+		else if (y > r.bottom - edge) list.scrollTop += Math.ceil((y - (r.bottom - edge)) / 3);
+	}
+
 	private clearDropHint() {
 		this.indicator?.remove();
+		this.navLine?.remove();
 		this.contentEl.querySelectorAll(".st-drop-target").forEach((t) => t.removeClass("st-drop-target"));
 	}
 
