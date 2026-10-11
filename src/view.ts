@@ -28,7 +28,7 @@ import { Marker, parseInline, renderInline, toggleMarker } from "./format";
 import { LinkSuggest, renderLinked } from "./links";
 import { exportFolderLabel, isSystemPath, shortPath } from "./locations";
 import { animateRender, capturePositions, motionAllowed, playOnce } from "./motion";
-import { ensureSections, moveToSection, newSection, presetKey, typeKey } from "./palette";
+import { ensureSections, isStarred, moveToSection, newSection, presetKey, starredItems, toggleStar, typeKey } from "./palette";
 import { Block, BlockPreset, BlockType, ComicDoc, FreeFormat, HIGHLIGHT_COLORS, ItemKind, ItemRef, Page, PaletteSection, Panel, PaperMode, SideNote } from "./types";
 
 type DragPayload =
@@ -76,6 +76,8 @@ export class ComicView extends TextFileView {
 	private pendingSnapshot: string | null = null;
 
 	private drag: DragPayload | null = null;
+	/** What the quick-add rows were last drawn from, so palette edits that change them also redraw the script. */
+	private quickAddDrawn = "";
 	private indicator: HTMLElement | null = null;
 	/** Insertion line over the pages list; overlaid so the list never shifts under the pointer. */
 	private navLine: HTMLElement | null = null;
@@ -1128,8 +1130,8 @@ export class ComicView extends TextFileView {
 		el.createDiv({
 			cls: "st-palette-hint",
 			text: this.paletteWide
-				? "Edit blocks right here. Drag a card by its grip into the script or another section. Drag the palette's edge narrower for compact chips."
-				: "Drag into the script, or click to add to the current panel. Drag blocks between sections to organise them. Drag the palette's edge wider to edit blocks in place.",
+				? "Edit blocks right here. Star a block to show it under each panel. Drag a card by its grip into the script or another section. Drag the palette's edge narrower for compact chips."
+				: "Drag into the script, or click to add to the current panel. Star a block to show it under each panel. Drag blocks between sections to organise them. Drag the palette's edge wider to edit blocks in place.",
 		});
 		el.scrollTop = scroll;
 
@@ -1138,7 +1140,16 @@ export class ComicView extends TextFileView {
 	}
 
 	private savePalette(scope: "all" | "script" | "palette" | "none") {
+		if (this.quickAddSignature() !== this.quickAddDrawn) {
+			if (scope === "palette") scope = "all";
+			else if (scope === "none") scope = "script";
+		}
 		void this.plugin.saveSettings({ from: this, scope });
+	}
+
+	private quickAddSignature(): string {
+		const s = this.plugin.settings;
+		return JSON.stringify(starredItems(s).map((k) => [k, s.presets.find((p) => presetKey(p.id) === k)?.name, s.presets.find((p) => presetKey(p.id) === k)?.typeId]));
 	}
 
 	private renderPaletteSection(parent: HTMLElement, sec: PaletteSection, index: number) {
@@ -1298,9 +1309,11 @@ export class ComicView extends TextFileView {
 
 	private typeChip(list: HTMLElement, type: BlockType, sec: PaletteSection) {
 		const chip = this.paletteChip(list, type.name, type.color, { kind: "new-block", typeId: type.id }, () => this.addBlockToActivePanel(newBlock(type)));
+		this.starToggle(chip, typeKey(type.id));
 		chip.addEventListener("contextmenu", (e) => {
 			e.preventDefault();
 			const menu = new Menu();
+			this.starMenuItem(menu, typeKey(type.id));
 			menu.addItem((i) =>
 				i.setTitle("Edit block type").setIcon("pencil").onClick(() =>
 					new BlockTypeModal(this.app, type, (t) => {
@@ -1325,9 +1338,11 @@ export class ComicView extends TextFileView {
 		const chip = this.paletteChip(list, preset.name, type.color, { kind: "preset", presetId: preset.id }, () => this.addBlockToActivePanel(blockFromPreset(preset)));
 		chip.addClass("is-preset");
 		chip.setAttr("title", preset.speaker ? `${preset.speaker}: ${preset.text}` : preset.text);
+		this.starToggle(chip, presetKey(preset.id));
 		chip.addEventListener("contextmenu", (e) => {
 			e.preventDefault();
 			const menu = new Menu();
+			this.starMenuItem(menu, presetKey(preset.id));
 			menu.addItem((i) =>
 				i.setTitle("Rename").setIcon("pencil").onClick(() =>
 					new PromptModal(this.app, "Rename saved block", preset.name, (v) => {
@@ -1367,6 +1382,7 @@ export class ComicView extends TextFileView {
 			type.name = name.value.trim() || type.name;
 			this.savePalette("script");
 		});
+		this.starToggle(top, typeKey(type.id));
 		this.iconBtn(top, "plus", "Add to current panel", () => this.addBlockToActivePanel(newBlock(type)));
 		this.iconBtn(top, "more-horizontal", "More", (e) => {
 			const menu = new Menu();
@@ -1428,6 +1444,7 @@ export class ComicView extends TextFileView {
 			preset.name = name.value.trim() || preset.name;
 			this.savePalette("none");
 		});
+		this.starToggle(top, presetKey(preset.id));
 		this.iconBtn(top, "plus", "Add to current panel", () => this.addBlockToActivePanel(blockFromPreset(preset)));
 		this.iconBtn(top, "more-horizontal", "More", (e) => {
 			const menu = new Menu();
@@ -1467,6 +1484,32 @@ export class ComicView extends TextFileView {
 			preset.text = text.value;
 			this.savePalette("none");
 		});
+	}
+
+	/** Star button: starred palette items get a button in each panel's quick-add row. */
+	private starToggle(parent: HTMLElement, key: string) {
+		const on = isStarred(this.plugin.settings, key);
+		const b = parent.createEl("button", {
+			cls: "st-star clickable-icon" + (on ? " is-starred" : ""),
+			attr: { "aria-label": on ? "Starred: shown under each panel (click to remove)" : "Star to show under each panel", "aria-pressed": String(on), draggable: "false" },
+		});
+		setIcon(b, "star");
+		b.addEventListener("mousedown", (e) => e.stopPropagation());
+		b.addEventListener("click", (e) => {
+			e.stopPropagation();
+			toggleStar(this.plugin.settings, key);
+			this.savePalette("all");
+		});
+	}
+
+	private starMenuItem(menu: Menu, key: string) {
+		const on = isStarred(this.plugin.settings, key);
+		menu.addItem((i) =>
+			i.setTitle(on ? "Unstar (hide under panels)" : "Star (show under panels)").setIcon("star").onClick(() => {
+				toggleStar(this.plugin.settings, key);
+				this.savePalette("all");
+			})
+		);
 	}
 
 	private paletteCard(list: HTMLElement, color: string, payload: DragPayload): HTMLElement {
@@ -1577,6 +1620,7 @@ export class ComicView extends TextFileView {
 	// ---------------------------------------------------------------- script
 
 	private renderScript() {
+		this.quickAddDrawn = this.quickAddSignature();
 		const canvas = this.scriptEl.createDiv("st-canvas");
 		const paper = canvas.createDiv("st-sheet");
 
@@ -1673,11 +1717,16 @@ export class ComicView extends TextFileView {
 		const quick = el.createDiv("st-quick-add");
 		if (inline) quick.appendChild(count);
 		if (!locked) {
-			for (const type of this.plugin.settings.blockTypes) {
-				const b = quick.createEl("button", { text: "+ " + type.name });
+			const settings = this.plugin.settings;
+			for (const key of starredItems(settings)) {
+				const id = key.slice(key.indexOf(":") + 1);
+				const preset = key.startsWith("preset:") ? settings.presets.find((p) => p.id === id) : undefined;
+				const type = preset ? findType(settings, preset.typeId) : settings.blockTypes.find((t) => t.id === id);
+				if (!type) continue;
+				const b = quick.createEl("button", { text: "+ " + (preset ? preset.name : type.name) });
 				b.setCssProps({ "--st-type-color": type.color });
 				b.addEventListener("click", () => {
-					const block = newBlock(type);
+					const block = preset ? blockFromPreset(preset) : newBlock(type);
 					this.focusAfterRender = block.id;
 					this.mutate(() => panel.blocks.push(block));
 				});

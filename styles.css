@@ -218,6 +218,14 @@
 .st-palette-add, .st-side-action { width: 100%; margin-top: 10px; font-size: var(--font-ui-smaller); }
 .st-chip-label { overflow: hidden; text-overflow: ellipsis; }
 .st-chip.is-preset { border-left-style: dashed; }
+/* star: shows the block under each panel */
+.st-root button.st-star { flex: 0 0 auto; padding: 2px; height: auto; color: var(--text-faint); opacity: 0; box-shadow: none; background: none; }
+.st-chip > button.st-star { margin-left: auto; }
+.st-root button.st-star svg { width: 14px; height: 14px; }
+.st-chip:hover > button.st-star, .st-pal-card:hover button.st-star, .st-root button.st-star:focus-visible { opacity: 0.7; }
+.st-root button.st-star.is-starred { opacity: 1; color: var(--color-yellow); }
+.st-root button.st-star.is-starred svg { fill: currentColor; }
+.st-root button.st-star:hover { opacity: 1; color: var(--color-yellow); }
 
 .st-pal-section { margin-top: 12px; }
 .st-pal-head {

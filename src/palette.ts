@@ -29,6 +29,7 @@ export function ensureSections(s: StorytellerSettings) {
 			return true;
 		});
 	}
+	s.quickAdd = [...new Set(s.quickAdd ?? [])].filter((k) => valid.has(k));
 	const home = (id: string) => s.paletteSections.find((x) => x.id === id) ?? s.paletteSections[0];
 	for (const t of s.blockTypes) if (!seen.has(typeKey(t.id))) home("blocks").items.push(typeKey(t.id));
 	for (const p of s.presets) if (!seen.has(presetKey(p.id))) home("saved").items.push(presetKey(p.id));
@@ -47,4 +48,15 @@ export function moveToSection(s: StorytellerSettings, key: string, target: Palet
 		from.items.splice(i, 1);
 	}
 	target.items.splice(Math.max(0, Math.min(index, target.items.length)), 0, key);
+}
+
+export const isStarred = (s: StorytellerSettings, key: string) => s.quickAdd.includes(key);
+
+export function toggleStar(s: StorytellerSettings, key: string) {
+	s.quickAdd = isStarred(s, key) ? s.quickAdd.filter((k) => k !== key) : [...s.quickAdd, key];
+}
+
+/** Starred items in the order they appear in the palette. */
+export function starredItems(s: StorytellerSettings): string[] {
+	return s.paletteSections.flatMap((sec) => sec.items).filter((k) => isStarred(s, k));
 }

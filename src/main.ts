@@ -1,7 +1,7 @@
 import { App, normalizePath, Notice, Plugin, TFile, TFolder } from "obsidian";
 import { DEFAULT_SETTINGS, EXPORT_FOLDER, FILE_EXTENSION, SETTINGS_SCHEMA, VIEW_TYPE_COMIC } from "./defaults";
 import { newDoc, normalizeDoc } from "./doc";
-import { ensureSections } from "./palette";
+import { ensureSections, typeKey } from "./palette";
 import { HOVER_SOURCE } from "./links";
 import { exportDocx } from "./export-docx";
 import {
@@ -106,6 +106,8 @@ export default class StorytellerPlugin extends Plugin {
 		this.settings.newPanelBlocks = [...(saved.newPanelBlocks ?? DEFAULT_SETTINGS.newPanelBlocks)];
 		this.settings.paletteSections = (saved.paletteSections ?? []).map((s) => ({ ...s, items: [...(s.items ?? [])] }));
 		this.settings.scriptFolders = [...(saved.scriptFolders ?? [])];
+		// Before stars, every block type showed under each panel; keep that until the user unstars some.
+		this.settings.quickAdd = [...(saved.quickAdd ?? this.settings.blockTypes.map((t) => typeKey(t.id)))];
 
 		// v1 had a "Note to artist" block and a "note" layout; notes are now comments.
 		if ((saved.schema ?? 1) < 2) {

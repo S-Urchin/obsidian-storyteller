@@ -30,7 +30,7 @@ export class StorytellerSettingTab extends PluginSettingTab {
 		new Setting(containerEl).setName("Block types").setHeading();
 		containerEl.createEl("p", {
 			cls: "setting-item-description",
-			text: "These appear in the palette and in each panel's quick-add row. Existing blocks keep working if you rename a type.",
+			text: "These appear in the palette; star one there to show it under each panel too. Existing blocks keep working if you rename a type.",
 		});
 		s.blockTypes.forEach((type, i) => {
 			const row = new Setting(containerEl).setName(type.name).setDesc(

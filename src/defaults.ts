@@ -17,6 +17,7 @@ export const DEFAULT_SETTINGS: StorytellerSettings = {
 	blockTypes: DEFAULT_BLOCK_TYPES,
 	presets: [],
 	paletteSections: [],
+	quickAdd: DEFAULT_BLOCK_TYPES.map((t) => "type:" + t.id),
 	paletteWidth: 200,
 	pageNavCollapsed: false,
 	newPanelBlocks: ["description"],

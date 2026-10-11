@@ -125,6 +125,8 @@ export interface StorytellerSettings {
 	blockTypes: BlockType[];
 	presets: BlockPreset[];
 	paletteSections: PaletteSection[];
+	/** Starred palette items ("type:id" / "preset:id"), shown in each panel's quick-add row in palette order. */
+	quickAdd: string[];
 	/** Palette column width in px; wide enough and blocks become editable in place. */
 	paletteWidth: number;
 	/** Pages panel shown as a slim rail of page numbers. */
