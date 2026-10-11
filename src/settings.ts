@@ -203,7 +203,7 @@ export class StorytellerSettingTab extends PluginSettingTab {
 				s.exportFont = v.trim() || DEFAULT_SETTINGS.exportFont;
 				await save();
 			}));
-		toggle("Open after export", "Open the .docx in your default app (desktop only).", "openAfterExport");
+		toggle("Open after export", "Open the exported .docx in your computer's default app (for example Word) as soon as it's saved.", "openAfterExport");
 		new Setting(containerEl)
 			.setName("Export folder")
 			.setDesc("Vault folder for .docx files; created automatically on the first export. Leave empty to save next to each script instead.")

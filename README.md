@@ -38,7 +38,7 @@ Scripts are `.comic` files (JSON) that open in their own editor, not the regular
 - **Write from the keyboard.** ↑/↓ at the start or end of a field moves to the previous or next field. Enter moves on from the title and byline. **Alt+↑/↓** moves the current block, crossing into the next panel at the edges. **Esc** leaves the field so Ctrl+Z undoes structural changes. Palette chips work with Tab and Enter.
 - **Shortcut list.** The keyboard button in the toolbar, **Ctrl+/**, or the *Show keyboard shortcuts* command lists every shortcut and gesture.
 - **Undo/redo** with Ctrl+Z / Ctrl+Shift+Z when the cursor isn't in a text field.
-- **Export to Word.** Click **Export .docx** to save `<script name>.docx` in an **Exported** folder at the root of your vault; the folder is created the first time you export. Click the notice that appears to see the file in your file manager. You can change the folder in settings, or clear the setting to save next to each script. The export includes:
+- **Export to Word.** Click **Export .docx** to save `<script name>.docx` in an **Exported** folder at the root of your vault; the folder is created the first time you export. The file then opens in your computer's default app for `.docx` (usually Word) so you can check it straight away. Turn this off under *Settings → Open after export*. The notice that appears also has a link to show the file in your file manager. You can change the folder in settings, or clear the setting to save next to each script. The export includes:
   - the template's layout, including its `ACTION` and `DIALOGUE` paragraph styles, so the file stays easy to edit in Word, with a page break before each comic page;
   - unresolved comments as Word margin comments;
   - a red `[REVISE]` before flagged items;
@@ -60,6 +60,12 @@ Scripts are `.comic` files (JSON) that open in their own editor, not the regular
 | Ctrl/Cmd + Z / Shift + Z | Undo / redo (outside text fields) |
 
 The command palette also has *New comic script*, *Export current script to Word*, *Add page*, *Collapse all pages* and *Expand all pages and panels*.
+
+## Privacy and permissions
+
+- No network access, no telemetry and no tracking: nothing leaves your computer.
+- Reads and writes only inside your vault (your `.comic` scripts and the `Exported` folder).
+- After exporting, it asks Obsidian to open the new `.docx` in your system's default app. You can turn this off in settings.
 
 ## Install (manual)
 

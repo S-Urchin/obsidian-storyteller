@@ -110,6 +110,8 @@ export default class StorytellerPlugin extends Plugin {
 			const free = DEFAULT_SETTINGS.blockTypes.find((t) => t.id === "freestyle");
 			if (free) this.settings.blockTypes.push({ ...free });
 		}
+		// v6: exported files open automatically by default (was opt-in).
+		if ((saved.schema ?? 1) < 6) this.settings.openAfterExport = true;
 		for (const t of this.settings.blockTypes) if (!["description", "lettering", "freestyle"].includes(t.style)) t.style = "description";
 		this.settings.schema = SETTINGS_SCHEMA;
 		ensureSections(this.settings);
@@ -174,13 +176,17 @@ export default class StorytellerPlugin extends Plugin {
 			else await this.app.vault.createBinary(path, buffer);
 			notice.hide();
 
-			// Desktop-only helpers that aren't part of the public API; used only when present.
+			// Obsidian's own "Open in default app" / "Show in system explorer" helpers. They aren't in the
+			// public typings and may be missing (e.g. on some mobile setups), so they're used only when present.
 			const shell = this.app as App & { showInFolder?: (path: string) => void; openWithDefaultApp?: (path: string) => void };
+			const autoOpen = this.settings.openAfterExport;
+			const canOpen = typeof shell.openWithDefaultApp === "function";
 			new Notice(
 				createFragment((f) => {
-					f.appendText(`Exported to ${path}`);
+					f.appendText(`Exported to ${path}. `);
+					if (autoOpen && canOpen) f.appendText("Opening it in your default app (you can turn this off in settings). ");
+					else if (autoOpen) f.appendText("Open it from that folder: this device can't open it automatically. ");
 					if (!shell.showInFolder) return;
-					f.appendText(" — ");
 					f.createEl("a", { cls: "st-notice-link", text: "Show in file manager", attr: { href: "#" } }).addEventListener("click", (e) => {
 						e.preventDefault();
 						shell.showInFolder?.(path);
@@ -188,7 +194,7 @@ export default class StorytellerPlugin extends Plugin {
 				}),
 				8000
 			);
-			if (this.settings.openAfterExport) shell.openWithDefaultApp?.(path);
+			if (autoOpen && canOpen) shell.openWithDefaultApp?.(path);
 		} catch (e) {
 			notice.hide();
 			console.error("Storyteller export failed", e);
