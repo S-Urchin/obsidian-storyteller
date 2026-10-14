@@ -217,13 +217,13 @@ export class HelpModal extends Modal {
 	private renderShortcuts(el: HTMLElement) {
 		const groups: [string, [string, string][]][] = [
 			[
-				"Formatting (select text first, or use the bar that pops up)",
+				"Formatting (on the selected words, or on what you type next; or use the bar that pops up)",
 				[
-					["Ctrl+B", "**Bold**"],
-					["Ctrl+I", "*Italic*"],
-					["Ctrl+B then Ctrl+I", "***Bold italic*** (the template's emphasis)"],
-					["Ctrl+U", "__Underline__"],
-					["Ctrl+Shift+H", "==Highlight== the selected words (yellow); click the toolbar button for other colours"],
+					["Ctrl+B", "Bold"],
+					["Ctrl+I", "Italic"],
+					["Ctrl+B then Ctrl+I", "Bold italic (the template's emphasis)"],
+					["Ctrl+U", "Underline"],
+					["Ctrl+Shift+H", "Highlight the selected words (yellow); click the toolbar button for other colours"],
 					["Ctrl+Alt+M", "Comment on the selected words"],
 				],
 			],

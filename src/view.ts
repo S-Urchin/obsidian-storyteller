@@ -1,4 +1,4 @@
-import { Menu, MenuItem, Notice, TextFileView, WorkspaceLeaf, setIcon } from "obsidian";
+import { Menu, MenuItem, Modifier, Notice, Scope, TextFileView, WorkspaceLeaf, setIcon } from "obsidian";
 import type StorytellerPlugin from "./main";
 import {
 	balloonNumbers,
@@ -18,14 +18,14 @@ import {
 	pageLabel,
 	panelLabel,
 	panelLetteringWords,
-	remapNoteRanges,
 	uid,
 	walk,
 	wordCount,
 } from "./doc";
 import { MAX_PALETTE, MIN_PALETTE, VIEW_TYPE_COMIC, WIDE_PALETTE } from "./defaults";
 import { BlockTypeModal, ConfirmModal, HelpModal, HelpTab, PageChoice, PagePickerModal, PromptModal } from "./modals";
-import { CommentSpan, detectHighlight, Edit, Marker, parseInline, renderInline, setHighlight, toggleMarker } from "./format";
+import { cutSegments, parseInline, rawToPlain, toRich } from "./format";
+import { CommentSpan, RichEditor, StyleKey } from "./rich-editor";
 import { LinkSuggest, renderLinked } from "./links";
 import { exportFolderLabel, isSystemPath, shortPath } from "./locations";
 import { animateRender, capturePositions, motionAllowed, playOnce } from "./motion";
@@ -52,6 +52,22 @@ type SideTab = "pinned" | "revisions";
 const MAX_UNDO = 200;
 /** Private drag type: text fields ignore it, so a drop can never insert text into them. */
 const DRAG_MIME = "application/x-storyteller";
+/** Clipboard type for formatted text copied between blocks. */
+const CLIP_MIME = "application/x-storyteller-text";
+/**
+ * Keys the view claims while it's active. Block text uses CodeMirror, like Obsidian's own editor,
+ * so Obsidian's editor hotkeys (Ctrl+B, Ctrl+I, Ctrl+Enter, Ctrl+E…) would otherwise take them first.
+ */
+const VIEW_KEYS: [Modifier[], string][] = [
+	[["Mod"], "b"],
+	[["Mod"], "i"],
+	[["Mod"], "u"],
+	[["Mod"], "Enter"],
+	[["Mod", "Shift"], "Enter"],
+	[["Mod", "Shift"], "h"],
+	[["Mod", "Alt"], "m"],
+	[["Mod"], "e"],
+];
 /** Distance from the top/bottom edge of the script at which dragging scrolls it. */
 const SCROLL_EDGE = 70;
 
@@ -94,15 +110,18 @@ export class ComicView extends TextFileView {
 	/** Read mode: the finished script, laid out like the Word export, with no editing chrome. */
 	private readMode = false;
 
-	// Formatting: live preview layers, and the bar that appears over a text selection.
-	private mirrors = new WeakMap<HTMLTextAreaElement, HTMLElement>();
-	/** The block each text box edits, for painting the words that have comments. */
-	private textBlocks = new WeakMap<HTMLTextAreaElement, Block>();
+	// Text editors (one per block), and the formatting bar that appears over a selection.
+	private editors = new Set<RichEditor>();
+	/** Each editor by its outer element, and the block it edits. */
+	private editorOf = new WeakMap<HTMLElement, RichEditor>();
+	private editorBlocks = new WeakMap<RichEditor, Block>();
+	private editorRefs = new WeakMap<RichEditor, { ref: ItemRef; type: BlockType }>();
+	/** Block text not yet turned into an editor: how to make it one, and the block it shows. */
+	private mounters = new WeakMap<HTMLElement, () => RichEditor>();
+	private staticBlocks = new WeakMap<HTMLElement, Block>();
 	private formatBar: HTMLElement | null = null;
 	private highlightPopover: HTMLElement | null = null;
-	private formatTarget: HTMLTextAreaElement | null = null;
-	/** The last formatting change, so Ctrl+Z inside the text box can take it back. */
-	private formatUndo: { ta: HTMLTextAreaElement; before: string; after: string; selStart: number; selEnd: number } | null = null;
+	private formatTarget: RichEditor | null = null;
 	/** After a re-render, focus this field inside the focused item instead of its first field. */
 	private focusSelector: string | null = null;
 	private focusCaret: number | null = null;
@@ -155,6 +174,8 @@ export class ComicView extends TextFileView {
 	constructor(leaf: WorkspaceLeaf, private plugin: StorytellerPlugin) {
 		super(leaf);
 		this.doc = newDoc(plugin.settings, "Untitled");
+		this.scope = new Scope(this.app.scope);
+		for (const [mods, key] of VIEW_KEYS) this.scope.register(mods, key, (evt) => this.viewKey(evt));
 		// Show "Edited" as soon as anything changes; Obsidian saves a moment later.
 		const debounced = this.requestSave;
 		this.requestSave = () => {
@@ -286,6 +307,7 @@ export class ComicView extends TextFileView {
 
 	async onClose() {
 		this.sheetObserver?.disconnect();
+		this.destroyEditors();
 	}
 
 	onResize() {
@@ -300,7 +322,6 @@ export class ComicView extends TextFileView {
 			return;
 		}
 		if (width > 0) this.narrow = narrow;
-		this.autosizeAll();
 		this.queueLayout();
 	}
 
@@ -784,7 +805,8 @@ export class ComicView extends TextFileView {
 			return this.setReadMode(!this.readMode);
 		}
 		const target = e.target as HTMLElement;
-		const inField = target.tagName === "TEXTAREA" || target.tagName === "INPUT";
+		// Inside a field (block text included), Ctrl+Z belongs to the field.
+		const inField = !!target.closest("input, textarea, [contenteditable='true']");
 		const key = e.key.toLowerCase();
 		if (!inField && key === "z") {
 			e.preventDefault();
@@ -803,6 +825,7 @@ export class ComicView extends TextFileView {
 		// Rebuilding removes the focused field; keep keyboard focus in this view so
 		// shortcuts (Ctrl+Z, Ctrl+E, ?) keep working without an extra click.
 		const hadFocus = root.contains(document.activeElement);
+		this.destroyEditors();
 		root.empty();
 		this.panelCountEls.clear();
 		this.marginEl = null;
@@ -861,21 +884,15 @@ export class ComicView extends TextFileView {
 		this.renderNav();
 		this.scriptEl.scrollTop = scrollTop;
 		this.updateStats();
-		// Size text areas now (batched) so items are measured at their real height.
-		if (this.contentEl.isConnected && !reading) {
-			this.autosizeAll();
-			this.animateScript();
-		}
+		if (this.contentEl.isConnected && !reading) this.animateScript();
 
 		window.requestAnimationFrame(() => {
-			this.autosizeAll();
 			this.layoutMargin();
 			if (this.focusAfterRender) {
 				const sel = this.focusSelector ?? ".st-focus-first";
 				const item = this.scriptEl.querySelector<HTMLElement>(`[data-id="${this.focusAfterRender}"]`);
-				const el = item?.querySelector<HTMLInputElement | HTMLTextAreaElement>(sel) ?? item?.querySelector<HTMLElement>(".st-focus-first");
-				el?.focus();
-				if (el && (el.instanceOf(HTMLInputElement) || el.instanceOf(HTMLTextAreaElement)) && this.focusCaret !== null) el.setSelectionRange(this.focusCaret, this.focusCaret);
+				const el = item?.querySelector<HTMLElement>(sel) ?? item?.querySelector<HTMLElement>(".st-focus-first");
+				if (el) this.focusEl(el, this.focusCaret);
 				this.focusAfterRender = null;
 				this.focusSelector = null;
 				this.focusCaret = null;
@@ -895,6 +912,7 @@ export class ComicView extends TextFileView {
 		this.panelCountEls.clear();
 		this.marginEl = null;
 		this.sheetObserver?.disconnect();
+		this.destroyEditors();
 		this.applyAppearance();
 		this.refreshSpeakers();
 		this.renderScript();
@@ -903,10 +921,7 @@ export class ComicView extends TextFileView {
 		this.updateStats();
 		this.scriptEl.scrollTop = scrollTop;
 		this.shownItems = new Set(Array.from(this.scriptEl.querySelectorAll<HTMLElement>(".st-sheet [data-id]"), (el) => el.dataset.id!));
-		window.requestAnimationFrame(() => {
-			this.autosizeAll();
-			this.layoutMargin();
-		});
+		window.requestAnimationFrame(() => this.layoutMargin());
 	}
 
 	private applyAppearance() {
@@ -1767,7 +1782,9 @@ export class ComicView extends TextFileView {
 		this.badges(side, ref);
 
 		const line = el.createDiv("st-block-line");
-		let ta: HTMLTextAreaElement;
+		let textCls = "st-text st-focus-first";
+		let textPlaceholder = "";
+		let firstIndent = "";
 
 		if (type.style === "lettering") {
 			const label = line.createDiv("st-lettering-label");
@@ -1808,74 +1825,223 @@ export class ComicView extends TextFileView {
 				});
 			}
 			label.createSpan({ cls: "st-colon", text: ":" });
-			ta = this.richText(line, "st-text" + (type.fixedSpeaker ? " st-focus-first" : ""), type.name + "…");
+			textCls = "st-text" + (type.fixedSpeaker ? " st-focus-first" : "");
+			textPlaceholder = type.name + "…";
 		} else if (type.style === "freestyle") {
 			const f = freeFormat(block);
 			this.applyFreeClasses(line, f);
-			ta = this.richText(line, "st-text st-focus-first", "Freestyle: anything goes (title cards, notes, lists…)");
+			textPlaceholder = "Freestyle: anything goes (title cards, notes, lists…)";
 			if (!locked) this.freeToolbar(el, block, f);
 		} else {
 			if (panelLabelEl) {
 				line.appendChild(panelLabelEl);
 				line.addClass("has-panel-label");
 			}
-			ta = this.richText(line, "st-text st-focus-first", "Describe the panel…");
-			if (panelLabelEl) {
-				// The label sits over the first line; indent the text past it so wrapped lines return to the margin.
-				const indent = panelLabel(ref.panelIndex!).length + 2 + "ch";
-				ta.setCssStyles({ textIndent: indent });
-				this.mirrors.get(ta)?.setCssStyles({ textIndent: indent });
-			}
+			textPlaceholder = "Describe the panel…";
+			// The label sits over the first line; indent the text past it so wrapped lines return to the margin.
+			if (panelLabelEl) firstIndent = panelLabel(ref.panelIndex!).length + 2 + "ch";
 		}
 
-		ta.value = block.text;
-		ta.readOnly = locked;
-		this.textBlocks.set(ta, block);
-		this.renderMirror(ta);
-		this.bindText(ta, (v) => {
-			const moved = remapNoteRanges(block.notes, block.text, v, ta.selectionStart);
-			block.text = v;
-			this.updatePanelCount(panel);
-			if (moved) {
-				this.renderMirror(ta);
-				this.refreshCardAnchors(block);
-			}
+		if (firstIndent) line.setCssProps({ "--st-first-indent": firstIndent });
+		// The block's text is drawn as formatted text; the editor itself is made when the pointer or
+		// the keyboard gets there. A long script has hundreds of blocks, and making an editor for each
+		// on every redraw took seconds.
+		const host = line.createDiv({ cls: textCls + " st-text-static", attr: { tabindex: "0", role: "textbox", "aria-multiline": "true", "aria-label": textPlaceholder } });
+		host.dataset.placeholder = textPlaceholder;
+		this.staticBlocks.set(host, block);
+		this.paintStatic(host);
+		this.mounters.set(host, () => {
+			const editor: RichEditor = new RichEditor({
+				cls: textCls,
+				text: block.text,
+				placeholder: textPlaceholder,
+				readOnly: locked,
+				clipboardType: CLIP_MIME,
+				ignoreDragTypes: [DRAG_MIME],
+				comments: () => this.commentSpans(block),
+				onChange: (text, changes) => {
+					this.beginEdit();
+					// Word comments stay on their words: typing at either edge stays outside them.
+					// (Positions are clamped first: a file edited elsewhere could hold stale ones.)
+					const map = (r: NoteRange): NoteRange => {
+						const start = changes.mapPos(Math.min(r.start, changes.length), 1);
+						return { start, end: Math.max(start, changes.mapPos(Math.min(r.end, changes.length), -1)) };
+					};
+					for (const n of block.notes) if (n.range) n.range = map(n.range);
+					if (this.draftRange && this.draftTarget === block.id) this.draftRange = map(this.draftRange);
+					block.text = text;
+					this.updatePanelCount(panel);
+					this.requestSave();
+					this.updateStats();
+					if (block.notes.some((n) => n.range)) this.refreshCardAnchors(block);
+					this.queueLayout();
+				},
+				onSelection: () => {
+					this.updateFormatBar(editor);
+					this.activateNoteAtCaret(editor);
+				},
+				onFocus: () => (this.pendingSnapshot = JSON.stringify(this.doc)),
+				onBlur: () =>
+					window.setTimeout(() => {
+						if (this.formatTarget === editor && !editor.hasFocus) this.hideFormatBar();
+					}, 0),
+				onKeydown: (e): boolean => this.editorKeys(e, editor, ref, type),
+			});
+			host.replaceWith(editor.dom);
+			this.editors.add(editor);
+			this.editorOf.set(editor.dom, editor);
+			this.editorBlocks.set(editor, block);
+			this.editorRefs.set(editor, { ref, type });
+			return editor;
 		});
-		ta.addEventListener("input", () => {
-			this.autosize(ta);
-			this.queueLayout();
+		host.addEventListener("mouseenter", () => this.mountText(host));
+		host.addEventListener("mousemove", () => this.mountText(host), { once: true });
+		host.addEventListener("focus", () => this.mountText(host)?.focus());
+		// Without a hover first (touch, or redrawn under a still pointer): put the cursor where it was pressed.
+		host.addEventListener("mousedown", (e) => {
+			const editor = this.mountText(host);
+			if (!editor) return;
+			e.preventDefault();
+			editor.focusAt(e.clientX, e.clientY);
 		});
-		ta.addEventListener("keydown", (e) => {
-			const mod = e.ctrlKey || e.metaKey;
-			if (mod && e.key === "Enter" && !isLocked(ref)) {
-				e.preventDefault();
-				e.shiftKey ? this.insertPanelAfter(ref) : this.insertBlockAfter(ref, type.id);
-				return;
+	}
+
+	/** Turns a block's drawn text into its editor (once), or returns the editor it already is. */
+	private mountText(el: HTMLElement): RichEditor | null {
+		const existing = this.editorOf.get(el);
+		if (existing) return existing;
+		const mount = this.mounters.get(el);
+		if (!mount) return null;
+		this.mounters.delete(el);
+		return mount();
+	}
+
+	/** Draws a block's text as it reads: styled, markers hidden, commented words marked. */
+	private paintStatic(host: HTMLElement) {
+		const block = this.staticBlocks.get(host);
+		if (!block) return;
+		host.empty();
+		const text = block.text;
+		if (!text) {
+			host.createSpan({ cls: "st-placeholder", text: host.dataset.placeholder ?? "" });
+			return;
+		}
+		const comments = this.commentSpans(block);
+		for (const { seg, from, to } of cutSegments(text, comments)) {
+			if (seg.marker) continue;
+			const on = comments.filter((c) => c.start < c.end && c.start <= from && c.end >= to);
+			const cls = [seg.bold && "st-b", seg.italic && "st-i", seg.underline && "st-u", seg.highlight && `st-mark st-mark-${seg.highlight}`, on.length && "st-cmt", on.some((c) => c.active) && "is-active"].filter(Boolean);
+			if (cls.length) host.createSpan({ cls: cls.join(" "), text: seg.text });
+			else host.appendText(seg.text);
+		}
+		// A last empty line needs something on it to take up its height, as in the editor.
+		if (text.endsWith("\n")) host.appendText("\u200b");
+	}
+
+	/** Screen box of a raw offset in drawn (not yet editable) text. */
+	private staticCoords(host: HTMLElement, raw: number): DOMRect | null {
+		const block = this.staticBlocks.get(host);
+		if (!block) return null;
+		const plain = rawToPlain(toRich(block.text), raw);
+		const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+		let node: Node | null;
+		let last: Node | null = null;
+		let seen = 0;
+		while ((node = walker.nextNode())) {
+			const len = node.textContent?.length ?? 0;
+			if (plain < seen + len) {
+				const range = document.createRange();
+				range.setStart(node, plain - seen);
+				range.setEnd(node, plain - seen + 1);
+				return range.getClientRects()[0] ?? range.getBoundingClientRect();
 			}
-			if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z" && this.undoFormat(ta)) {
-				e.preventDefault();
-				return;
-			}
-			if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === "h") {
-				e.preventDefault();
-				e.stopPropagation();
-				this.toggleQuickHighlight(ta);
-				return;
-			}
-			// Ctrl+Alt+M, as in Word: comment on the selected words.
-			if (mod && e.altKey && !e.shiftKey && e.code === "KeyM") {
-				e.preventDefault();
-				e.stopPropagation();
-				this.commentOnSelection(ta);
-				return;
-			}
-			const marker = this.shortcutMarker(e);
-			if (marker) {
-				e.preventDefault();
-				e.stopPropagation();
-				this.applyFormat(ta, marker);
-			}
-		});
+			seen += len;
+			last = node;
+		}
+		// Past the last character: the end of the text.
+		if (!last) return null;
+		const range = document.createRange();
+		range.selectNodeContents(last);
+		const rects = range.getClientRects();
+		return rects[rects.length - 1] ?? null;
+	}
+
+	/** A VIEW_KEYS key: goes to the block being edited (or switches modes); returns false when handled. */
+	private viewKey(evt: KeyboardEvent): boolean {
+		if (!this.contentEl.contains(document.activeElement)) return true;
+		const ed = this.focusedEditor();
+		const ctx = ed && this.editorRefs.get(ed);
+		if (ed && ctx && this.editorKeys(evt, ed, ctx.ref, ctx.type)) return false;
+		if (evt.key.toLowerCase() === "e" && !evt.shiftKey && !evt.altKey) {
+			this.setReadMode(!this.readMode);
+			return false;
+		}
+		return true;
+	}
+
+	/**
+	 * Keys inside a block's text: formatting shortcuts, new blocks, comments, and moving between
+	 * fields (↑/↓ at the start/end, Alt+↑/↓ moves the block, Esc leaves so Ctrl+Z undoes structure).
+	 */
+	private editorKeys(e: KeyboardEvent, editor: RichEditor, ref: ItemRef, type: BlockType): boolean {
+		const mod = e.ctrlKey || e.metaKey;
+		const handled = () => {
+			e.preventDefault();
+			e.stopPropagation();
+			return true;
+		};
+		if (mod && e.key === "Enter") {
+			if (isLocked(ref)) return false;
+			e.shiftKey ? this.insertPanelAfter(ref) : this.insertBlockAfter(ref, type.id);
+			return handled();
+		}
+		if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === "h") {
+			this.toggleQuickHighlight(editor);
+			return handled();
+		}
+		// Ctrl+Alt+M, as in Word: comment on the selected words.
+		if (mod && e.altKey && !e.shiftKey && e.code === "KeyM") {
+			this.commentOnSelection(editor);
+			return handled();
+		}
+		const key = this.shortcutStyle(e);
+		if (key) {
+			this.applyFormat(editor, key);
+			return handled();
+		}
+		if (e.key === "Escape") {
+			this.hideFormatBar();
+			this.contentEl.focus({ preventScroll: true });
+			return handled();
+		}
+		if (e.altKey && !mod && !e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+			this.moveBlockBy(ref.item.id, e.key === "ArrowUp" ? -1 : 1, ".st-text", editor.selection.from);
+			return handled();
+		}
+		if (mod || e.altKey || e.shiftKey) return false;
+		if (e.key === "ArrowDown" && editor.caretAtEnd() && this.focusField(editor.dom, 1)) return handled();
+		if (e.key === "ArrowUp" && editor.caretAtStart() && this.focusField(editor.dom, -1)) return handled();
+		return false;
+	}
+
+	/** Focuses a field (a block's editor or an input), with the cursor at `caret` if given. */
+	private focusEl(el: HTMLElement, caret: number | null = null) {
+		const editor = this.mountText(el);
+		if (editor) return editor.focus(caret ?? undefined);
+		el.focus();
+		if (caret !== null && el.instanceOf(HTMLInputElement)) el.setSelectionRange(caret, caret);
+	}
+
+	private focusedEditor(): RichEditor | null {
+		for (const ed of this.editors) if (ed.hasFocus) return ed;
+		return null;
+	}
+
+	/** CodeMirror listens on the whole document, so editors are destroyed whenever the script is redrawn. */
+	private destroyEditors() {
+		if (this.formatTarget) this.hideFormatBar();
+		for (const ed of this.editors) ed.destroy();
+		this.editors.clear();
 	}
 
 	// ---------------------------------------------------------------- freestyle blocks
@@ -1888,10 +2054,10 @@ export class ComicView extends TextFileView {
 
 	/** Changes a freestyle block's layout (undoable) and keeps the cursor in it. */
 	private setFree(block: Block, change: Partial<FreeFormat>) {
-		const active = document.activeElement as HTMLTextAreaElement | null;
-		const keepCaret = active?.closest?.(`[data-id="${block.id}"]`) ? active.selectionStart : null;
+		const ed = this.focusedEditor();
+		const keepCaret = ed && this.editorBlocks.get(ed) === block ? ed.selection.from : null;
 		this.focusAfterRender = block.id;
-		this.focusSelector = "textarea.st-text";
+		this.focusSelector = ".st-text";
 		this.focusCaret = keepCaret;
 		this.mutate(() => (block.format = { ...freeFormat(block), ...change }));
 	}
@@ -1920,71 +2086,39 @@ export class ComicView extends TextFileView {
 		btn("a-arrow-up", "A+", "Larger text", false, { size: order[Math.min(order.length - 1, i + 1)] });
 	}
 
-	/** Ctrl+B / Ctrl+I / Ctrl+U → the marker to toggle (Ctrl+Shift+H is handled separately: see toggleQuickHighlight). */
-	private shortcutMarker(e: KeyboardEvent): Marker | null {
+	/** Ctrl+B / Ctrl+I / Ctrl+U → the style to toggle (Ctrl+Shift+H is handled separately: see toggleQuickHighlight). */
+	private shortcutStyle(e: KeyboardEvent): StyleKey | null {
 		if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return null;
 		const k = e.key.toLowerCase();
-		if (k === "b") return "**";
-		if (k === "i") return "*";
-		if (k === "u") return "__";
+		if (k === "b") return "bold";
+		if (k === "i") return "italic";
+		if (k === "u") return "underline";
 		return null;
 	}
 
-	/**
-	 * A textarea with a styled copy of its text underneath, so bold, italic, underline and
-	 * highlights show while typing. The textarea's own text is transparent; the font is
-	 * monospaced (bold and italic keep the same width), so both layers line up exactly.
-	 */
-	private richText(parent: HTMLElement, cls: string, placeholder: string): HTMLTextAreaElement {
-		const wrap = parent.createDiv("st-text-wrap");
-		const mirror = wrap.createDiv({ cls: "st-text-mirror", attr: { "aria-hidden": "true" } });
-		const ta = wrap.createEl("textarea", { cls, attr: { rows: "1", placeholder } });
-		this.mirrors.set(ta, mirror);
-		ta.addEventListener("input", () => {
-			this.renderMirror(ta);
-			if (this.formatTarget === ta) this.positionFormatBar();
-		});
-		const check = () => window.setTimeout(() => {
-			this.updateFormatBar(ta);
-			this.activateNoteAtCaret(ta);
-		}, 0);
-		ta.addEventListener("select", check);
-		ta.addEventListener("mouseup", check);
-		ta.addEventListener("keyup", (e) => {
-			if (e.key.startsWith("Arrow") || e.key === "Shift" || e.key === "Home" || e.key === "End" || (e.key === "a" && (e.ctrlKey || e.metaKey))) check();
-		});
-		ta.addEventListener("blur", () => window.setTimeout(() => {
-			if (this.formatTarget === ta && document.activeElement !== ta) this.hideFormatBar();
-		}, 0));
-		return ta;
-	}
-
-	/** Repaints a text box's styled copy, marking the words that have comments (and the draft one). */
-	private renderMirror(ta: HTMLTextAreaElement) {
-		const mirror = this.mirrors.get(ta);
-		if (!mirror) return;
-		const block = this.textBlocks.get(ta);
+	/** The words with comments in a block (and the draft comment's), for its editor to mark. */
+	private commentSpans(block: Block): CommentSpan[] {
 		const spans: CommentSpan[] = [];
-		if (block) {
-			for (const n of this.visibleNotes(block.notes)) {
-				if (n.range) spans.push({ start: n.range.start, end: n.range.end, active: n.id === this.activeNote });
-			}
-			if (this.draftRange && this.draftTarget === block.id) spans.push({ ...this.draftRange, active: true });
+		for (const n of this.visibleNotes(block.notes)) {
+			if (n.range) spans.push({ start: n.range.start, end: n.range.end, active: n.id === this.activeNote });
 		}
-		renderInline(mirror, ta.value, spans);
+		if (this.draftRange && this.draftTarget === block.id) spans.push({ ...this.draftRange, active: true });
+		return spans;
 	}
 
-	private repaintMirrors() {
-		this.scriptEl?.querySelectorAll<HTMLTextAreaElement>(".st-sheet textarea.st-text").forEach((ta) => {
-			if (this.textBlocks.get(ta)?.notes.some((n) => n.range)) this.renderMirror(ta);
+	private repaintComments() {
+		const marked = (block: Block | undefined) => !!block && (block.notes.some((n) => n.range) || this.draftTarget === block.id);
+		for (const ed of this.editors) if (marked(this.editorBlocks.get(ed))) ed.refreshDecorations();
+		this.scriptEl?.querySelectorAll<HTMLElement>(".st-text-static").forEach((host) => {
+			if (marked(this.staticBlocks.get(host))) this.paintStatic(host);
 		});
 	}
 
 	/** Putting the cursor in commented words brings their comment forward, as in Word. */
-	private activateNoteAtCaret(ta: HTMLTextAreaElement) {
-		const block = this.textBlocks.get(ta);
-		if (!block || !this.marginOpen || document.activeElement !== ta) return;
-		const at = ta.selectionStart;
+	private activateNoteAtCaret(editor: RichEditor) {
+		const block = this.editorBlocks.get(editor);
+		if (!block || !this.marginOpen || !editor.hasFocus) return;
+		const at = editor.selection.from;
 		const hits = this.visibleNotes(block.notes).filter((n) => n.range && n.range.start < n.range.end && n.range.start <= at && at <= n.range.end);
 		if (!hits.length) return;
 		// Innermost first, when comments overlap.
@@ -1993,13 +2127,13 @@ export class ComicView extends TextFileView {
 	}
 
 	/** Opens a draft comment on just the selected words of a block. */
-	private commentOnSelection(ta: HTMLTextAreaElement) {
-		const block = this.textBlocks.get(ta);
+	private commentOnSelection(editor: RichEditor) {
+		const block = this.editorBlocks.get(editor);
 		if (!block) return;
-		let start = ta.selectionStart;
-		let end = ta.selectionEnd;
-		while (start < end && /\s/.test(ta.value[start])) start++;
-		while (end > start && /\s/.test(ta.value[end - 1])) end--;
+		const text = editor.text;
+		let { from: start, to: end } = editor.selection;
+		while (start < end && /\s/.test(text[start])) start++;
+		while (end > start && /\s/.test(text[end - 1])) end--;
 		if (start === end) return new Notice("Select the words you want to comment on.");
 		this.hideFormatBar();
 		this.draftTarget = block.id;
@@ -2019,90 +2153,59 @@ export class ComicView extends TextFileView {
 
 	// ---------------------------------------------------------------- formatting
 
-	/** Applies an already-computed edit to the field and remembers it for Ctrl+Z. */
-	private applyEdit(ta: HTMLTextAreaElement, value: string, selStart: number, selEnd: number, edit: Edit) {
-		ta.focus();
-		ta.setRangeText(edit.insert, edit.from, edit.to);
-		ta.setSelectionRange(edit.selStart, edit.selEnd);
-		// Programmatic edits don't enter the text box's own undo history, so remember this one.
-		this.formatUndo = { ta, before: value, after: ta.value, selStart, selEnd };
-		ta.dispatchEvent(new Event("input", { bubbles: true }));
-		this.updateFormatBar(ta);
-	}
-
-	/** Toggles a marker around the selection. */
-	private applyFormat(ta: HTMLTextAreaElement, marker: Marker) {
-		if (ta.readOnly) return new Notice("This block is locked.");
-		const value = ta.value;
-		const selStart = ta.selectionStart;
-		const selEnd = ta.selectionEnd;
-		this.applyEdit(ta, value, selStart, selEnd, toggleMarker(value, selStart, selEnd, marker));
+	/** Bold / italic / underline on the selected words, or for what's typed next if nothing is selected. */
+	private applyFormat(editor: RichEditor, key: StyleKey) {
+		if (editor.readOnly) return new Notice("This block is locked.");
+		editor.toggle(key);
+		this.updateFormatBar(editor);
 	}
 
 	/** Sets (or clears) the highlight colour of the selected words only — never the whole block. */
-	private applyHighlight(ta: HTMLTextAreaElement, color: HighlightColor | null) {
-		if (ta.readOnly) return new Notice("This block is locked.");
-		const value = ta.value;
-		const selStart = ta.selectionStart;
-		const selEnd = ta.selectionEnd;
-		this.applyEdit(ta, value, selStart, selEnd, setHighlight(value, selStart, selEnd, color));
+	private applyHighlight(editor: RichEditor, color: HighlightColor | null) {
+		if (editor.readOnly) return new Notice("This block is locked.");
+		editor.setHighlight(color);
 		this.hideHighlightPopover();
+		this.updateFormatBar(editor);
 	}
 
 	/** Ctrl+Shift+H: toggles the default (yellow) highlight on the selected words. */
-	private toggleQuickHighlight(ta: HTMLTextAreaElement) {
-		const current = detectHighlight(ta.value, ta.selectionStart, ta.selectionEnd);
-		this.applyHighlight(ta, current === "yellow" ? null : "yellow");
+	private toggleQuickHighlight(editor: RichEditor) {
+		this.applyHighlight(editor, editor.selectionStyle().highlight === "yellow" ? null : "yellow");
 	}
 
-	/** Ctrl+Z right after a formatting change undoes that change (then normal undo continues). */
-	private undoFormat(ta: HTMLTextAreaElement): boolean {
-		const u = this.formatUndo;
-		if (!u || u.ta !== ta || ta.value !== u.after) return false;
-		this.formatUndo = null;
-		ta.value = u.before;
-		ta.setSelectionRange(u.selStart, u.selEnd);
-		ta.dispatchEvent(new Event("input", { bubbles: true }));
-		this.updateFormatBar(ta);
-		return true;
-	}
-
-	private updateFormatBar(ta: HTMLTextAreaElement) {
-		if (document.activeElement !== ta || ta.readOnly || ta.selectionStart === ta.selectionEnd) {
-			if (this.formatTarget === ta) this.hideFormatBar();
+	private updateFormatBar(editor: RichEditor) {
+		const { from, to } = editor.selection;
+		if (!editor.hasFocus || editor.readOnly || from === to) {
+			if (this.formatTarget === editor) this.hideFormatBar();
 			return;
 		}
-		this.formatTarget = ta;
+		this.formatTarget = editor;
 		const bar = (this.formatBar ??= this.buildFormatBar());
 		if (bar.parentElement !== this.contentEl) this.contentEl.appendChild(bar);
-		// Show which styles the selection already has (the button would remove them).
-		bar.querySelectorAll<HTMLElement>("[data-marker]").forEach((b) => {
-			const m = b.dataset.marker as Marker;
-			const edit = toggleMarker(ta.value, ta.selectionStart, ta.selectionEnd, m);
-			b.toggleClass("is-active", edit.insert.length < edit.to - edit.from);
-		});
-		const current = detectHighlight(ta.value, ta.selectionStart, ta.selectionEnd);
+		// Show which styles the whole selection already has (the button would remove them).
+		const style = editor.selectionStyle();
+		bar.querySelectorAll<HTMLElement>("[data-style]").forEach((b) => b.toggleClass("is-active", style[b.dataset.style as StyleKey]));
 		const hlBtn = bar.querySelector<HTMLElement>(".st-format-btn-highlight");
-		hlBtn?.toggleClass("is-active", !!current);
-		hlBtn?.setCssProps({ "--st-active-highlight": current ? `var(--st-hl-${current})` : "" });
-		if (this.highlightPopover?.hasClass("is-visible")) this.fillHighlightPopover(current);
+		hlBtn?.toggleClass("is-active", !!style.highlight);
+		hlBtn?.setCssProps({ "--st-active-highlight": style.highlight ? `var(--st-hl-${style.highlight})` : "" });
+		if (this.highlightPopover?.hasClass("is-visible")) this.fillHighlightPopover(style.highlight);
 		bar.addClass("is-visible");
 		this.positionFormatBar();
 	}
 
 	private buildFormatBar(): HTMLElement {
 		const bar = createDiv({ cls: "st-format-bar", attr: { role: "toolbar", "aria-label": "Text formatting" } });
-		const buttons: [Marker, string, string, string][] = [
-			["**", "bold", "Bold", "Ctrl+B"],
-			["*", "italic", "Italic", "Ctrl+I"],
-			["__", "underline", "Underline", "Ctrl+U"],
+		const buttons: [StyleKey, string, string, string][] = [
+			["bold", "bold", "Bold", "Ctrl+B"],
+			["italic", "italic", "Italic", "Ctrl+I"],
+			["underline", "underline", "Underline", "Ctrl+U"],
 		];
-		for (const [marker, icon, name, keys] of buttons) {
-			const b = bar.createEl("button", { cls: "st-format-btn", attr: { "aria-label": `${name} (${keys})`, "data-marker": marker } });
+		for (const [key, icon, name, keys] of buttons) {
+			const b = bar.createEl("button", { cls: "st-format-btn", attr: { "aria-label": `${name} (${keys})`, "data-style": key } });
 			setIcon(b, icon);
 			// Keep the text selected: don't let the button take focus.
 			b.addEventListener("mousedown", (e) => e.preventDefault());
-			b.addEventListener("click", () => this.formatTarget && this.applyFormat(this.formatTarget, marker));
+			b.addEventListener("click", () => this.formatTarget && this.applyFormat(this.formatTarget, key));
 		}
 		const hlBtn = bar.createEl("button", {
 			cls: "st-format-btn st-format-btn-highlight",
@@ -2127,10 +2230,9 @@ export class ComicView extends TextFileView {
 			swatch.setCssProps({ "--st-swatch": `var(--st-hl-${color})` });
 			swatch.addEventListener("mousedown", (e) => e.preventDefault());
 			swatch.addEventListener("click", () => {
-				const ta = this.formatTarget;
-				if (!ta) return;
-				const current = detectHighlight(ta.value, ta.selectionStart, ta.selectionEnd);
-				this.applyHighlight(ta, current === color ? null : color);
+				const ed = this.formatTarget;
+				if (!ed) return;
+				this.applyHighlight(ed, ed.selectionStyle().highlight === color ? null : color);
 			});
 		}
 		const remove = pop.createEl("button", { cls: "st-highlight-swatch st-highlight-none", attr: { "aria-label": "Remove highlight" } });
@@ -2154,8 +2256,7 @@ export class ComicView extends TextFileView {
 			return;
 		}
 		if (pop.parentElement !== this.contentEl) this.contentEl.appendChild(pop);
-		const ta = this.formatTarget;
-		if (ta) this.fillHighlightPopover(detectHighlight(ta.value, ta.selectionStart, ta.selectionEnd));
+		if (this.formatTarget) this.fillHighlightPopover(this.formatTarget.selectionStyle().highlight);
 		pop.addClass("is-visible");
 		this.positionHighlightPopover();
 	}
@@ -2180,10 +2281,9 @@ export class ComicView extends TextFileView {
 	/** Places the bar just above the start of the selection (below it near the top edge). */
 	private positionFormatBar() {
 		const bar = this.formatBar;
-		const ta = this.formatTarget;
-		if (!bar || !ta || !bar.hasClass("is-visible")) return;
-		const mirror = this.mirrors.get(ta);
-		const at = (mirror && this.offsetRect(mirror, ta.selectionStart)) || ta.getBoundingClientRect();
+		const ed = this.formatTarget;
+		if (!bar || !ed || !bar.hasClass("is-visible")) return;
+		const at = ed.coordsAt(ed.selection.from) ?? ed.dom.getBoundingClientRect();
 		const host = this.contentEl.getBoundingClientRect();
 		const w = bar.offsetWidth;
 		const h = bar.offsetHeight;
@@ -2195,26 +2295,6 @@ export class ComicView extends TextFileView {
 		if (this.highlightPopover?.hasClass("is-visible")) this.positionHighlightPopover();
 	}
 
-	/** Screen position of a character offset, measured on the preview layer (same text, same layout). */
-	private offsetRect(mirror: HTMLElement, offset: number): DOMRect | null {
-		const walker = document.createTreeWalker(mirror, NodeFilter.SHOW_TEXT);
-		let node: Node | null;
-		let seen = 0;
-		while ((node = walker.nextNode())) {
-			const len = node.textContent?.length ?? 0;
-			if (offset <= seen + len) {
-				const range = document.createRange();
-				const local = offset - seen;
-				range.setStart(node, local);
-				range.setEnd(node, Math.min(local + 1, len));
-				const rects = range.getClientRects();
-				return rects[0] ?? range.getBoundingClientRect();
-			}
-			seen += len;
-		}
-		return null;
-	}
-
 	private hideFormatBar() {
 		this.formatBar?.removeClass("is-visible");
 		this.hideHighlightPopover();
@@ -2224,14 +2304,14 @@ export class ComicView extends TextFileView {
 	// ---------------------------------------------------------------- keyboard flow
 
 	/**
-	 * Lets the script be written from the keyboard like a document:
-	 * ↑/↓ cross between fields at the start/end of a field, Enter leaves the title lines,
-	 * Alt+↑/↓ moves the current block, Esc leaves the field (so Ctrl+Z undoes structure).
+	 * Lets the title, byline and speaker inputs work like the rest of the document:
+	 * ↑/↓ cross between fields, Enter leaves the title lines, Alt+↑/↓ moves the current block,
+	 * Esc leaves the field (so Ctrl+Z undoes structure). Block text does the same in editorKeys.
 	 */
 	private wireFieldKeys(el: HTMLElement) {
 		el.addEventListener("keydown", (e) => {
 			const t = e.target as HTMLElement;
-			if (!t.closest(".st-sheet") || !(t.instanceOf(HTMLTextAreaElement) || t.instanceOf(HTMLInputElement))) return;
+			if (!t.closest(".st-sheet") || !t.instanceOf(HTMLInputElement)) return;
 			const field = t;
 			const mod = e.ctrlKey || e.metaKey;
 
@@ -2244,8 +2324,7 @@ export class ComicView extends TextFileView {
 				const block = t.closest<HTMLElement>(".st-block");
 				if (!block) return;
 				e.preventDefault();
-				const sel = field.hasClass("st-speaker") ? "input.st-speaker" : "textarea.st-text";
-				this.moveBlockBy(block.dataset.id!, e.key === "ArrowUp" ? -1 : 1, sel, field.selectionStart ?? 0);
+				this.moveBlockBy(block.dataset.id!, e.key === "ArrowUp" ? -1 : 1, "input.st-speaker", field.selectionStart ?? 0);
 				return;
 			}
 			if (mod || e.altKey || e.shiftKey) return;
@@ -2258,23 +2337,23 @@ export class ComicView extends TextFileView {
 			}
 			// Speaker fields keep ↑/↓ for their autocomplete list.
 			if (field.hasAttribute("list")) return;
-			const collapsed = field.selectionStart === field.selectionEnd;
-			if (e.key === "ArrowDown" && collapsed && (field.instanceOf(HTMLInputElement) || field.selectionEnd === field.value.length)) {
-				if (this.focusField(field, 1)) e.preventDefault();
-			} else if (e.key === "ArrowUp" && collapsed && (field.instanceOf(HTMLInputElement) || field.selectionStart === 0)) {
-				if (this.focusField(field, -1)) e.preventDefault();
-			}
+			if (e.key === "ArrowDown" && this.focusField(field, 1)) e.preventDefault();
+			else if (e.key === "ArrowUp" && this.focusField(field, -1)) e.preventDefault();
 		});
 	}
 
 	/** Moves focus to the next/previous text field on the paper. */
 	private focusField(from: HTMLElement, dir: 1 | -1): boolean {
-		const fields = Array.from(this.scriptEl.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(".st-sheet input.st-title, .st-sheet input.st-byline, .st-sheet input.st-speaker, .st-sheet textarea.st-text"));
-		const next = fields[fields.indexOf(from as HTMLInputElement) + dir];
+		const fields = Array.from(this.scriptEl.querySelectorAll<HTMLElement>(".st-sheet input.st-title, .st-sheet input.st-byline, .st-sheet input.st-speaker, .st-sheet .st-text"));
+		const next = fields[fields.indexOf(from) + dir];
 		if (!next) return false;
-		next.focus();
-		const pos = dir === 1 ? 0 : next.value.length;
-		next.setSelectionRange(pos, pos);
+		const editor = this.mountText(next);
+		if (editor) editor.focus(dir === 1 ? "start" : "end");
+		else if (next.instanceOf(HTMLInputElement)) {
+			next.focus();
+			const pos = dir === 1 ? 0 : next.value.length;
+			next.setSelectionRange(pos, pos);
+		}
 		next.scrollIntoView({ block: "nearest" });
 		return true;
 	}
@@ -2384,7 +2463,7 @@ export class ComicView extends TextFileView {
 		}, "st-collapse");
 		if (item.collapsed) b.addClass("is-collapsed");
 		label.addEventListener("dblclick", (e) => {
-			if ((e.target as HTMLElement).closest("button, input, textarea")) return;
+			if ((e.target as HTMLElement).closest("button, input, textarea, .st-text")) return;
 			b.click();
 		});
 	}
@@ -2419,22 +2498,26 @@ export class ComicView extends TextFileView {
 		});
 	}
 
-	/** Binds an input/textarea to the model without re-rendering, with one undo step per editing session. */
-	private bindText(el: HTMLInputElement | HTMLTextAreaElement, set: (v: string) => void) {
+	/** Binds an input to the model without re-rendering, with one undo step per editing session. */
+	private bindText(el: HTMLInputElement, set: (v: string) => void) {
 		el.addEventListener("focus", () => (this.pendingSnapshot = JSON.stringify(this.doc)));
 		el.addEventListener("input", () => {
 			if (el.readOnly) return;
-			if (this.pendingSnapshot) {
-				this.undoStack.push(this.pendingSnapshot);
-				if (this.undoStack.length > MAX_UNDO) this.undoStack.shift();
-				this.redoStack = [];
-				this.pendingSnapshot = null;
-				this.updateHistoryButtons();
-			}
+			this.beginEdit();
 			set(el.value);
 			this.requestSave();
 			this.updateStats();
 		});
+	}
+
+	/** The first change after focusing a field makes one undo step for the whole editing session. */
+	private beginEdit() {
+		if (!this.pendingSnapshot) return;
+		this.undoStack.push(this.pendingSnapshot);
+		if (this.undoStack.length > MAX_UNDO) this.undoStack.shift();
+		this.redoStack = [];
+		this.pendingSnapshot = null;
+		this.updateHistoryButtons();
 	}
 
 	private updatePanelCount(panel: Panel) {
@@ -2449,18 +2532,6 @@ export class ComicView extends TextFileView {
 		if (!this.datalistEl) return;
 		this.datalistEl.empty();
 		for (const s of collectSpeakers(this.doc)) this.datalistEl.createEl("option", { attr: { value: s } });
-	}
-
-	private autosize(ta: HTMLTextAreaElement) {
-		ta.setCssStyles({ height: "auto" });
-		ta.setCssStyles({ height: ta.scrollHeight + "px" });
-	}
-
-	private autosizeAll() {
-		const tas = Array.from(this.contentEl.querySelectorAll<HTMLTextAreaElement>("textarea.st-text"));
-		for (const ta of tas) ta.setCssStyles({ height: "auto" });
-		const heights = tas.map((ta) => ta.scrollHeight);
-		tas.forEach((ta, i) => ta.setCssStyles({ height: heights[i] + "px" }));
 	}
 
 	// ---------------------------------------------------------------- context menu
@@ -2484,9 +2555,10 @@ export class ComicView extends TextFileView {
 		const containerLocked = ref.kind === "page" ? false : ref.kind === "panel" ? ref.page.locked : !!(ref.page.locked || ref.panel?.locked);
 		const settings = this.plugin.settings;
 
-		const ta = (e.target as HTMLElement).closest?.<HTMLTextAreaElement>("textarea.st-text");
-		if (ta && ta.selectionStart !== ta.selectionEnd && this.textBlocks.get(ta) === item) {
-			menu.addItem((i) => i.setTitle("Comment on selected words").setIcon("quote").onClick(() => this.commentOnSelection(ta)));
+		const host = (e.target as HTMLElement).closest?.<HTMLElement>(".st-text");
+		const ed = host ? this.editorOf.get(host) : undefined;
+		if (ed && ed.selection.from !== ed.selection.to && this.editorBlocks.get(ed) === item) {
+			menu.addItem((i) => i.setTitle("Comment on selected words").setIcon("quote").onClick(() => this.commentOnSelection(ed)));
 		}
 		menu.addItem((i) => i.setTitle(ref.kind === "block" ? "Comment on whole block" : "Note or comment").setIcon("message-square-plus").onClick(() => this.startComment(item.id)));
 		menu.addSeparator();
@@ -3003,7 +3075,7 @@ export class ComicView extends TextFileView {
 		this.activeNote = id;
 		if (!this.marginEl) return;
 		this.marginEl.querySelectorAll<HTMLElement>(".st-comment[data-note]").forEach((c) => c.toggleClass("is-active", c.dataset.note === id));
-		this.repaintMirrors();
+		this.repaintComments();
 		this.layoutMargin();
 	}
 
@@ -3037,9 +3109,9 @@ export class ComicView extends TextFileView {
 				if (!anchors.has(key)) {
 					const el = this.scriptEl.querySelector<HTMLElement>(`.st-sheet [data-id="${id}"]`);
 					// A comment on some of the words sits level with the line those words are on.
-					const ta = start === undefined ? null : el?.querySelector<HTMLTextAreaElement>("textarea.st-text");
-					const mirror = ta ? this.mirrors.get(ta) : undefined;
-					const at = (mirror && this.offsetRect(mirror, Number(start))) || el?.getBoundingClientRect();
+					const host = start === undefined ? null : el?.querySelector<HTMLElement>(".st-text");
+					const ed = host ? this.editorOf.get(host) : undefined;
+					const at = (ed ? ed.coordsAt(Number(start)) : host ? this.staticCoords(host, Number(start)) : null) ?? el?.getBoundingClientRect();
 					anchors.set(key, at ? at.top - base : 0);
 				}
 				return { card, order, want: Math.max(0, anchors.get(key)!), top: 0, h: card.offsetHeight };
@@ -3064,7 +3136,7 @@ export class ComicView extends TextFileView {
 		layer.setCssStyles({ height: bottom + "px" });
 
 		this.scriptEl.querySelectorAll(".st-comment-anchor").forEach((el) => el.removeClass("st-comment-anchor"));
-		// Word comments light up their words instead (see renderMirror).
+		// Word comments light up their words instead (see commentSpans).
 		const active = placed[k]?.card.dataset.start === undefined ? placed[k]?.card.dataset.anchor : undefined;
 		if (active) this.scriptEl.querySelector(`.st-sheet [data-id="${active}"]`)?.addClass("st-comment-anchor");
 	}

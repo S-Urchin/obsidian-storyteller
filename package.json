@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "test": "node scripts/test.mjs",
+    "test:e2e": "node tests/e2e/editor.e2e.js"
   },
   "keywords": [
     "obsidian",
@@ -15,6 +17,9 @@
   ],
   "license": "MIT",
   "devDependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.13",
     "@eslint/js": "^9.39.5",
     "@eslint/json": "^0.14.0",
     "@types/node": "^20.11.0",
@@ -22,6 +27,7 @@
     "eslint": "^9.39.5",
     "eslint-plugin-obsidianmd": "^0.4.2",
     "obsidian": "^1.14.4",
+    "puppeteer-core": "^23.11.1",
     "tslib": "^2.6.2",
     "typescript": "^5.4.5",
     "typescript-eslint": "^8.71.1"

@@ -1,0 +1,135 @@
+{
+  "format": "storyteller-comic",
+  "version": 1,
+  "title": "The Lighthouse",
+  "byline": "10.15.26 - by Writer",
+  "pages": [
+    {
+      "id": "d008",
+      "locked": false,
+      "revision": false,
+      "pinned": false,
+      "notes": [],
+      "collapsed": false,
+      "panels": [
+        {
+          "id": "d003",
+          "locked": false,
+          "revision": false,
+          "pinned": false,
+          "notes": [],
+          "collapsed": false,
+          "blocks": [
+            {
+              "id": "d001",
+              "locked": false,
+              "revision": false,
+              "pinned": false,
+              "notes": [],
+              "typeId": "description",
+              "speaker": "",
+              "modifier": "",
+              "text": "Wide shot. A storm batters a lonely lighthouse on a black rock. One window glows."
+            },
+            {
+              "id": "d002",
+              "locked": false,
+              "revision": false,
+              "pinned": false,
+              "notes": [],
+              "typeId": "caption",
+              "speaker": "",
+              "modifier": "",
+              "text": "Thirty years I kept the light."
+            }
+          ]
+        },
+        {
+          "id": "d007",
+          "locked": false,
+          "revision": false,
+          "pinned": false,
+          "notes": [],
+          "collapsed": false,
+          "blocks": [
+            {
+              "id": "d004",
+              "locked": false,
+              "revision": false,
+              "pinned": false,
+              "notes": [],
+              "typeId": "description",
+              "speaker": "",
+              "modifier": "",
+              "text": "Inside. MAYA (70s, oilskin coat) climbs the spiral stairs, lantern in hand."
+            },
+            {
+              "id": "d005",
+              "locked": false,
+              "revision": false,
+              "pinned": false,
+              "notes": [],
+              "typeId": "dialogue",
+              "speaker": "MAYA",
+              "modifier": "whisper",
+              "text": "Not tonight, old girl. Not tonight."
+            },
+            {
+              "id": "d006",
+              "locked": false,
+              "revision": false,
+              "pinned": false,
+              "notes": [],
+              "typeId": "sfx",
+              "speaker": "",
+              "modifier": "",
+              "text": "KRAKOOOM"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "d012",
+      "locked": false,
+      "revision": false,
+      "pinned": false,
+      "notes": [],
+      "collapsed": false,
+      "panels": [
+        {
+          "id": "d011",
+          "locked": false,
+          "revision": false,
+          "pinned": false,
+          "notes": [],
+          "collapsed": false,
+          "blocks": [
+            {
+              "id": "d009",
+              "locked": false,
+              "revision": false,
+              "pinned": false,
+              "notes": [],
+              "typeId": "description",
+              "speaker": "",
+              "modifier": "",
+              "text": "The lamp room. The great lens is dark. Rain streams down the glass."
+            },
+            {
+              "id": "d010",
+              "locked": false,
+              "revision": false,
+              "pinned": false,
+              "notes": [],
+              "typeId": "thought",
+              "speaker": "MAYA",
+              "modifier": "",
+              "text": "If the light goes out, the Halcyon hits the rocks."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -511,7 +511,6 @@
 }
 .st-block:hover::before, .st-block:focus-within::before { opacity: 0.8; }
 
-.st-root .st-sheet textarea.st-text { display: block; width: 100%; resize: none; overflow: hidden; }
 
 /* description: "Panel 1:" runs into the text; wrapped lines return to the margin */
 .st-block-line.has-panel-label { position: relative; }
@@ -865,31 +864,50 @@
 .theme-dark .st-root.st-paper-auto .st-margin-head { color: var(--st-sheet-muted); padding-top: 8px; }
 
 /* ===================================================================
-   Formatting: live preview under each text box
-   The textarea's own text is transparent; a styled copy of the same text sits
-   underneath. Courier keeps bold/italic the same width, so both layers line up.
+   Block text: a CodeMirror editor (as in Obsidian) with the formatting
+   markers hidden, made to read like typed text on the page.
    =================================================================== */
-.st-text-wrap { position: relative; min-width: 0; }
-.st-text-mirror {
-	position: absolute;
-	inset: 0;
-	pointer-events: none;
-	white-space: pre-wrap;
-	overflow-wrap: break-word;
-	word-wrap: break-word;
-	overflow: hidden;
-	color: var(--st-sheet-fg);
+.st-root .st-sheet .cm-editor.st-text {
+	display: block;
+	width: 100%;
+	min-width: 0;
+	color: inherit;
+	background: transparent;
+	font: inherit;
 }
-.st-root .st-sheet textarea.st-text { position: relative; z-index: 1; }
-.st-root .st-sheet textarea.st-text,
-.st-root .st-sheet textarea.st-text:hover,
-.st-root .st-sheet textarea.st-text:focus,
-.st-root .st-sheet textarea.st-text:focus-visible,
-.st-root .st-sheet textarea.st-text:active { color: transparent; }
-.st-root .st-sheet textarea.st-text::selection { color: transparent; background: rgba(66, 133, 244, 0.32); }
+.st-root .st-sheet .cm-editor.st-text.cm-focused { outline: none; }
+.st-root .st-sheet .st-text .cm-scroller { font-family: inherit; line-height: inherit; overflow: visible; }
+.st-root .st-sheet .st-text .cm-content {
+	padding: 0;
+	min-height: 0;
+	font-family: inherit;
+	caret-color: var(--st-sheet-fg);
+}
+.st-root .st-sheet .st-text .cm-line { padding: 0; }
+/* "Panel 1:" sits over the first line; wrapped lines return to the margin */
+.st-root .st-sheet .st-text .cm-line:first-child { text-indent: var(--st-first-indent, 0); }
+/* CodeMirror's zero-width helpers beside hidden markers sit "text-top", which pushes the line down 1px */
+.st-root .st-sheet .st-text .cm-widgetBuffer { vertical-align: top; }
+.st-root .st-sheet .st-text .cm-placeholder { color: var(--st-sheet-muted); opacity: 0.6; }
+.st-root .st-sheet .st-text .cm-content ::selection { background: rgba(66, 133, 244, 0.32); }
+/* Block text before it becomes an editor (see paintStatic): laid out exactly like the editor's lines. */
+.st-root .st-sheet .st-text-static {
+	display: block;
+	width: 100%;
+	min-width: 0;
+	white-space: pre-wrap;
+	white-space: break-spaces;
+	word-break: break-word;
+	overflow-wrap: anywhere;
+	text-indent: var(--st-first-indent, 0);
+	cursor: text;
+	outline: none;
+}
+.st-root .st-sheet .st-text-static .st-placeholder { color: var(--st-sheet-muted); opacity: 0.6; }
+.st-sheet .st-text .cm-content[contenteditable="false"],
+.st-sheet .st-text .cm-content[aria-readonly="true"] { cursor: default; }
 .st-block-line.has-panel-label > .st-label { z-index: 2; }
 
-.st-md { color: var(--st-sheet-muted); opacity: 0.55; font-weight: normal; font-style: normal; text-decoration: none; }
 .st-b { font-weight: 700; }
 .st-i { font-style: italic; }
 .st-u { text-decoration: underline; text-underline-offset: 2px; }
@@ -1375,11 +1393,9 @@
    Classes sit on the editor line (text box + preview inherit them)
    and on the Read-mode paragraph, so both look the same.
    =================================================================== */
-.st-free-left .st-text, .st-free-left .st-text-mirror, .st-r-p.st-free-left { text-align: left; }
-.st-free-center .st-text, .st-free-center .st-text-mirror, .st-r-p.st-free-center { text-align: center; }
-.st-free-right .st-text, .st-free-right .st-text-mirror, .st-r-p.st-free-right { text-align: right; }
-.st-root .st-sheet .st-free-center textarea.st-text { text-align: center; }
-.st-root .st-sheet .st-free-right textarea.st-text { text-align: right; }
+.st-free-left .st-text, .st-r-p.st-free-left { text-align: left; }
+.st-free-center .st-text, .st-r-p.st-free-center { text-align: center; }
+.st-free-right .st-text, .st-r-p.st-free-right { text-align: right; }
 .st-free-small { font-size: 0.83em; }
 .st-free-large { font-size: 1.33em; line-height: 1.25; }
 .st-free-indent { padding-left: 2in; }

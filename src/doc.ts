@@ -277,37 +277,6 @@ export function describeRef(ref: ItemRef, settings: StorytellerSettings): string
 	return parts.join(" › ");
 }
 
-/**
- * Keeps word comments on the same words while their block's text is edited.
- * The edit is taken to be the span between the common start and end of the two texts.
- * Typing just before or after the commented words stays outside them; typing inside
- * grows the range; deleting the words leaves the comment at the spot they were.
- * `caret` (the cursor after the edit) settles where typing went when the text alone can't
- * tell, e.g. a "y" typed inside "Hey" versus after it.
- * Returns whether any note has a range (so the caller knows to repaint).
- */
-export function remapNoteRanges(notes: SideNote[], before: string, after: string, caret?: number): boolean {
-	const ranged = notes.filter((n) => n.range);
-	if (!ranged.length || before === after) return ranged.length > 0;
-	const max = Math.min(before.length, after.length);
-	let p = 0;
-	while (p < max && before[p] === after[p]) p++;
-	if (caret !== undefined) p = Math.max(0, Math.min(p, caret - Math.max(0, after.length - before.length)));
-	let s = 0;
-	while (s < max - p && before[before.length - 1 - s] === after[after.length - 1 - s]) s++;
-	const oldEnd = before.length - s;
-	const newEnd = after.length - s;
-	const delta = newEnd - oldEnd;
-	for (const n of ranged) {
-		const r = n.range!;
-		const start = r.start < p ? r.start : r.start >= oldEnd ? r.start + delta : p;
-		const end = r.end <= p ? r.end : r.end >= oldEnd ? r.end + delta : newEnd;
-		r.start = Math.min(start, after.length);
-		r.end = Math.max(r.start, Math.min(end, after.length));
-	}
-	return true;
-}
-
 /** A freestyle block's layout, filled in with defaults. */
 export function freeFormat(block: Block): FreeFormat {
 	return { ...DEFAULT_FREE_FORMAT, ...(block.format ?? {}) };

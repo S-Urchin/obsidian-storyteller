@@ -1,20 +1,36 @@
 /*
- * Inline formatting, shared by the editor preview and the Word export so they always agree.
+ * Inline formatting, shared by the editor, Read mode and the Word export so they always agree.
  *
- *   ***bold italic***   **bold**   *italic*   __underline__   ==highlight==
+ * Text is saved with markdown-like markers:
  *
- * Highlights come in colours too: =g=green=g=  =b=blue=b=  =p=pink=p=  =o=orange=o=
- * (plain == is yellow, same as before).
+ *   **bold**   *italic*   ***bold italic***   __underline__   ==highlight==
+ *   =g=green=g=   =b=blue=b=   =p=pink=p=   =o=orange=o=      (plain == is yellow)
+ *   \*  \_  \=  \\      a character that would otherwise read as a marker
  *
- * Markers don't nest (except *** for bold italic) and don't span lines, which keeps
- * the rules predictable while typing.
+ * Markers are switches: each one turns its style on or off, so styles can nest and overlap
+ * (**bold =o=and orange=o=**). A marker that isn't switched back off on the same line is
+ * ordinary text, so older scripts with a stray * still read as they did.
+ *
+ * The editor never shows markers. It edits a Rich value, the plain text with a style for
+ * each character, and writes the markers back with serialize().
  */
 
 import { HighlightColor } from "./types";
 
+export interface Style {
+	bold: boolean;
+	italic: boolean;
+	underline: boolean;
+	highlight: HighlightColor | null;
+}
+
+export const PLAIN: Style = { bold: false, italic: false, underline: false, highlight: null };
+
+export const sameStyle = (a: Style, b: Style) => a.bold === b.bold && a.italic === b.italic && a.underline === b.underline && a.highlight === b.highlight;
+
 export interface Segment {
 	text: string;
-	/** A formatting marker (**, ==, …): faded in the editor, dropped from the export. */
+	/** A formatting marker or escape backslash: hidden in the editor, dropped from the export. */
 	marker: boolean;
 	bold?: boolean;
 	italic?: boolean;
@@ -31,51 +47,304 @@ export const HIGHLIGHT_MARKERS: Record<HighlightColor, string> = {
 	orange: "=o=",
 };
 
-const MARKER_TO_HIGHLIGHT: Record<string, HighlightColor> = Object.fromEntries(
-	Object.entries(HIGHLIGHT_MARKERS).map(([color, marker]) => [marker, color])
-) as Record<string, HighlightColor>;
+/** Characters that are escaped with a backslash when they're meant literally. */
+const SPECIAL = "*_=\\";
 
-// Longest first, so "=g=" etc. aren't shadowed by the shorter "==" alternative.
-const ALL_MARKERS = ["***", "**", "*", "__", ...Object.values(HIGHLIGHT_MARKERS)].sort((a, b) => b.length - a.length);
+// Longest first, so "=g=" isn't read as "==" followed by "g=".
+const HIGHLIGHT_BY_LENGTH = (Object.entries(HIGHLIGHT_MARKERS) as [HighlightColor, string][]).sort((a, b) => b[1].length - a[1].length);
 
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const highlightAlternatives = Object.values(HIGHLIGHT_MARKERS)
-	.map((m) => `${escapeRe(m)}[^=\\n]+?${escapeRe(m)}`)
-	.join("|");
-const TOKEN = new RegExp(`(\\*\\*\\*[^*\\n]+?\\*\\*\\*|\\*\\*[^*\\n]+?\\*\\*|\\*[^*\\n]+?\\*|__[^_\\n]+?__|${highlightAlternatives})`, "g");
+interface Token {
+	at: number;
+	len: number;
+	kind: "star" | "under" | "highlight" | "escape";
+	color?: HighlightColor;
+	literal?: boolean;
+}
 
-export function parseInline(text: string): Segment[] {
-	const out: Segment[] = [];
-	let last = 0;
-	let m: RegExpExecArray | null;
-	TOKEN.lastIndex = 0;
-	while ((m = TOKEN.exec(text))) {
-		if (m.index > last) out.push({ text: text.slice(last, m.index), marker: false });
-		const tok = m[0];
-		const mark = ALL_MARKERS.find((mk) => tok.startsWith(mk))!;
-		const n = mark.length;
-		const style: Partial<Segment> =
-			mark === "***" ? { bold: true, italic: true }
-			: mark === "**" ? { bold: true }
-			: mark === "*" ? { italic: true }
-			: mark === "__" ? { underline: true }
-			: { highlight: MARKER_TO_HIGHLIGHT[mark] };
-		out.push({ text: mark, marker: true }, { text: tok.slice(n, -n), marker: false, ...style }, { text: mark, marker: true });
-		last = m.index + tok.length;
+/** Finds the markers in text[from, to), which holds no line breaks. */
+function tokenize(text: string, from: number, to: number): Token[] {
+	const out: Token[] = [];
+	let i = from;
+	while (i < to) {
+		const c = text[i];
+		if (c === "\\" && i + 1 < to && SPECIAL.includes(text[i + 1])) {
+			out.push({ at: i, len: 1, kind: "escape" });
+			i += 2;
+		} else if (c === "*" || c === "_") {
+			let j = i;
+			while (j < to && text[j] === c) j++;
+			const n = j - i;
+			// Runs that can't be a marker (*****, a lone _) stay text.
+			if (c === "*" && n <= 3) out.push({ at: i, len: n, kind: "star" });
+			else if (c === "_" && n === 2) out.push({ at: i, len: 2, kind: "under" });
+			i = j;
+		} else if (c === "=") {
+			const hit = HIGHLIGHT_BY_LENGTH.find(([, m]) => i + m.length <= to && text.startsWith(m, i));
+			if (hit) {
+				out.push({ at: i, len: hit[1].length, kind: "highlight", color: hit[0] });
+				i += hit[1].length;
+			} else i++;
+		} else i++;
 	}
-	if (last < text.length) out.push({ text: text.slice(last), marker: false });
 	return out;
 }
 
-/** Words with a comment on them, as offsets into the raw text. */
-export interface CommentSpan {
-	start: number;
-	end: number;
-	active?: boolean;
+/** Marks markers that are never switched off again on their line as plain text. */
+function settle(tokens: Token[]) {
+	for (let pass = 0; pass <= tokens.length; pass++) {
+		let bold = -1;
+		let italic = -1;
+		let underline = -1;
+		let highlight = -1;
+		for (let k = 0; k < tokens.length; k++) {
+			const t = tokens[k];
+			if (t.literal) continue;
+			if (t.kind === "star") {
+				if (t.len !== 2) italic = italic < 0 ? k : -1;
+				if (t.len !== 1) bold = bold < 0 ? k : -1;
+			} else if (t.kind === "under") underline = underline < 0 ? k : -1;
+			else if (t.kind === "highlight") {
+				if (highlight < 0) highlight = k;
+				else if (tokens[highlight].color === t.color) highlight = -1;
+				else t.literal = true; // a different colour while one is open: not a marker
+			}
+		}
+		const open = Math.max(bold, italic, underline, highlight);
+		if (open < 0) return;
+		tokens[open].literal = true;
+	}
 }
 
-/** Splits the text into segments with their offsets, cut wherever a comment starts or ends. */
-export function cutSegments(text: string, spans: CommentSpan[]): { seg: Segment; from: number; to: number }[] {
+/** Splits raw text into styled text and markers; the pieces join back into exactly the input. */
+export function parseInline(text: string): Segment[] {
+	const out: Segment[] = [];
+	let lineStart = 0;
+	while (lineStart <= text.length) {
+		let lineEnd = text.indexOf("\n", lineStart);
+		if (lineEnd < 0) lineEnd = text.length;
+		const tokens = tokenize(text, lineStart, lineEnd);
+		settle(tokens);
+		const style: Style = { ...PLAIN };
+		let pos = lineStart;
+		const pushText = (to: number) => {
+			if (to <= pos) return;
+			const seg: Segment = { text: text.slice(pos, to), marker: false };
+			if (style.bold) seg.bold = true;
+			if (style.italic) seg.italic = true;
+			if (style.underline) seg.underline = true;
+			if (style.highlight) seg.highlight = style.highlight;
+			out.push(seg);
+			pos = to;
+		};
+		for (const t of tokens) {
+			if (t.literal) continue;
+			pushText(t.at);
+			out.push({ text: text.slice(t.at, t.at + t.len), marker: true });
+			pos = t.at + t.len;
+			if (t.kind === "star") {
+				if (t.len !== 2) style.italic = !style.italic;
+				if (t.len !== 1) style.bold = !style.bold;
+			} else if (t.kind === "under") style.underline = !style.underline;
+			else if (t.kind === "highlight") style.highlight = style.highlight ? null : t.color!;
+		}
+		pushText(lineEnd);
+		if (lineEnd >= text.length) break;
+		out.push({ text: "\n", marker: false });
+		lineStart = lineEnd + 1;
+	}
+	return out;
+}
+
+/** The text as it reads, with markers dropped. */
+export function plainText(text: string): string {
+	return parseInline(text)
+		.filter((s) => !s.marker)
+		.map((s) => s.text)
+		.join("");
+}
+
+// ---------------------------------------------------------------- the editor's model
+
+/** Plain text with one style per character, plus where each character sits in the raw text. */
+export interface Rich {
+	text: string;
+	styles: Style[];
+	/** Raw offset of each character (after any escape backslash); at[text.length] is the raw length. */
+	at: number[];
+}
+
+export function toRich(raw: string): Rich {
+	let text = "";
+	const styles: Style[] = [];
+	const at: number[] = [];
+	let pos = 0;
+	for (const seg of parseInline(raw)) {
+		if (!seg.marker) {
+			const style: Style = { bold: !!seg.bold, italic: !!seg.italic, underline: !!seg.underline, highlight: seg.highlight ?? null };
+			for (let k = 0; k < seg.text.length; k++) {
+				text += seg.text[k];
+				styles.push(style);
+				at.push(pos + k);
+			}
+		}
+		pos += seg.text.length;
+	}
+	at.push(raw.length);
+	return { text, styles, at };
+}
+
+/** Writes markers back, switching styles at the fewest places; every line ends with all styles off. */
+export function serialize(text: string, styles: Style[]): string {
+	let out = "";
+	let cur: Style = PLAIN;
+	const switchTo = (to: Style) => {
+		if (sameStyle(cur, to)) return;
+		if (cur.highlight && cur.highlight !== to.highlight) out += HIGHLIGHT_MARKERS[cur.highlight];
+		const b = cur.bold !== to.bold;
+		const i = cur.italic !== to.italic;
+		if (b || i) out += b && i ? "***" : b ? "**" : "*";
+		if (cur.underline !== to.underline) out += "__";
+		if (to.highlight && cur.highlight !== to.highlight) out += HIGHLIGHT_MARKERS[to.highlight];
+		cur = to;
+	};
+	for (let k = 0; k < text.length; k++) {
+		const ch = text[k];
+		if (ch === "\n") {
+			switchTo(PLAIN);
+			out += ch;
+			continue;
+		}
+		switchTo(styles[k] ?? PLAIN);
+		out += SPECIAL.includes(ch) ? "\\" + ch : ch;
+	}
+	switchTo(PLAIN);
+	return out;
+}
+
+/** How many characters of plain text come before a raw offset. */
+export function rawToPlain(rich: Rich, raw: number): number {
+	let lo = 0;
+	let hi = rich.text.length;
+	while (lo < hi) {
+		const mid = (lo + hi) >> 1;
+		if (rich.at[mid] < raw) lo = mid + 1;
+		else hi = mid;
+	}
+	return lo;
+}
+
+/** Raw offset where plain character `k` starts (before its escape backslash, if any). */
+export function charStart(raw: string, rich: Rich, k: number): number {
+	if (k >= rich.text.length) return raw.length;
+	const a = rich.at[k];
+	return a > 0 && raw[a - 1] === "\\" && SPECIAL.includes(raw[a]) ? a - 1 : a;
+}
+
+/** Raw offset just after plain character `k - 1`, inside its styling: where typing carries the style on. */
+export function caretAfter(rich: Rich, k: number): number {
+	return k > 0 ? rich.at[k - 1] + 1 : rich.at[0];
+}
+
+/** What a stretch of plain text has in common: bold only if all of it is bold, and so on. */
+export function commonStyle(styles: Style[], from: number, to: number): Style {
+	if (from >= to) return styles[Math.max(0, from - 1)] ?? PLAIN;
+	const out: Style = { bold: true, italic: true, underline: true, highlight: styles[from].highlight };
+	for (let k = from; k < to; k++) {
+		const s = styles[k];
+		out.bold &&= s.bold;
+		out.italic &&= s.italic;
+		out.underline &&= s.underline;
+		if (s.highlight !== out.highlight) out.highlight = null;
+	}
+	return out;
+}
+
+// ---------------------------------------------------------------- minimal edits
+
+export interface Change {
+	from: number;
+	to: number;
+	insert: string;
+}
+
+/**
+ * The edits that turn `a` into `b`, as small as possible (Myers' diff on the part that differs),
+ * so positions in unchanged text, like comment anchors, map through cleanly. Positions refer to `a`.
+ */
+export function diffText(a: string, b: string): Change[] {
+	if (a === b) return [];
+	let p = 0;
+	const max = Math.min(a.length, b.length);
+	while (p < max && a[p] === b[p]) p++;
+	let s = 0;
+	while (s < max - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s++;
+	const A = a.slice(p, a.length - s);
+	const B = b.slice(p, b.length - s);
+	const N = A.length;
+	const M = B.length;
+	const whole = [{ from: p, to: p + N, insert: B }];
+	if (!N || !M || N * M > 4_000_000) return whole;
+
+	const LIMIT = 400;
+	const off = N + M;
+	const v = new Int32Array(2 * off + 2);
+	const trace: Int32Array[] = [];
+	let found = false;
+	for (let d = 0; d <= Math.min(N + M, LIMIT); d++) {
+		trace.push(v.slice());
+		for (let k = -d; k <= d; k += 2) {
+			let x = k === -d || (k !== d && v[off + k - 1] < v[off + k + 1]) ? v[off + k + 1] : v[off + k - 1] + 1;
+			let y = x - k;
+			while (x < N && y < M && A[x] === B[y]) {
+				x++;
+				y++;
+			}
+			v[off + k] = x;
+			if (x >= N && y >= M) {
+				found = true;
+				break;
+			}
+		}
+		if (found) break;
+	}
+	if (!found) return whole;
+
+	// Walk back through the snapshots to recover the edit script.
+	const ops: Change[] = [];
+	let x = N;
+	let y = M;
+	for (let d = trace.length - 1; d > 0; d--) {
+		const vd = trace[d];
+		const k = x - y;
+		const prevK = k === -d || (k !== d && vd[off + k - 1] < vd[off + k + 1]) ? k + 1 : k - 1;
+		const prevX = vd[off + prevK];
+		const prevY = prevX - prevK;
+		while (x > prevX && y > prevY) {
+			x--;
+			y--;
+		}
+		if (x === prevX) ops.push({ from: p + x, to: p + x, insert: B[prevY] }); // insertion of B[prevY]
+		else ops.push({ from: p + prevX, to: p + prevX + 1, insert: "" }); // deletion of A[prevX]
+		x = prevX;
+		y = prevY;
+	}
+	ops.reverse();
+	// Merge neighbouring single-character steps into runs.
+	const merged: Change[] = [];
+	for (const op of ops) {
+		const last = merged[merged.length - 1];
+		if (last && op.from === last.to) {
+			last.to = op.to;
+			last.insert += op.insert;
+		} else if (last && op.from === last.from && op.to === op.from && last.to === last.from) {
+			last.insert += op.insert;
+		} else merged.push({ ...op });
+	}
+	return merged;
+}
+
+/** Splits raw text into pieces with their offsets, cut wherever a span starts or ends (for comments). */
+export function cutSegments(text: string, spans: { start: number; end: number }[]): { seg: Segment; from: number; to: number }[] {
 	const out: { seg: Segment; from: number; to: number }[] = [];
 	let pos = 0;
 	for (const seg of parseInline(text)) {
@@ -90,153 +359,6 @@ export function cutSegments(text: string, spans: CommentSpan[]): { seg: Segment;
 		pos = end;
 	}
 	return out;
-}
-
-/** Renders text as styled spans (markers included, faded) for the editor's live preview. */
-export function renderInline(parent: HTMLElement, text: string, comments: CommentSpan[] = []) {
-	parent.empty();
-	for (const { seg, from, to } of cutSegments(text, comments)) {
-		const on = comments.filter((c) => c.start < c.end && c.start <= from && c.end >= to);
-		if (!seg.marker && !seg.bold && !seg.italic && !seg.underline && !seg.highlight && !on.length) {
-			parent.appendText(seg.text);
-			continue;
-		}
-		const span = parent.createSpan({ text: seg.text });
-		if (seg.marker) span.addClass("st-md");
-		if (seg.bold) span.addClass("st-b");
-		if (seg.italic) span.addClass("st-i");
-		if (seg.underline) span.addClass("st-u");
-		if (seg.highlight) span.addClass("st-mark", "st-mark-" + seg.highlight);
-		if (on.length) span.addClass("st-cmt");
-		if (on.some((c) => c.active)) span.addClass("is-active");
-	}
-	// A trailing newline needs content after it, or the preview is a line short of the text box.
-	if (text.endsWith("\n") || !text) parent.appendText("​");
-}
-
-export type Marker = "**" | "*" | "__";
-
-/** Counts how many `ch` characters run up to the end of `s` (or from its start). */
-function runAtEnd(s: string, ch: string) {
-	let n = 0;
-	while (n < s.length && s[s.length - 1 - n] === ch) n++;
-	return n;
-}
-function runAtStart(s: string, ch: string) {
-	let n = 0;
-	while (n < s.length && s[n] === ch) n++;
-	return n;
-}
-
-/** Whether `count` asterisks on both sides include the given * marker (handles *** = bold + italic). */
-function starsInclude(before: number, after: number, marker: Marker) {
-	const has = (k: number) => (marker === "**" ? k >= 2 : k % 2 === 1);
-	return has(before) && has(after);
-}
-
-export interface Edit {
-	/** Replace value[from, to) with `insert`, then select [selStart, selEnd). */
-	from: number;
-	to: number;
-	insert: string;
-	selStart: number;
-	selEnd: number;
-}
-
-/**
- * Works out the edit that toggles `marker` around the selection [start, end):
- * - already wrapped (markers just outside, or inside the selection) → unwrap
- * - otherwise wrap; surrounding spaces stay outside the markers
- * - empty selection → insert a pair and put the caret between them
- */
-export function toggleMarker(value: string, start: number, end: number, marker: Marker): Edit {
-	const L = marker.length;
-	const star = marker[0] === "*";
-
-	// Keep leading/trailing spaces outside the markers (markdown-style rules).
-	let s = start;
-	let e = end;
-	while (s < e && /\s/.test(value[s])) s++;
-	while (e > s && /\s/.test(value[e - 1])) e--;
-
-	if (s === e) {
-		return { from: start, to: end, insert: value.slice(start, end) + marker + marker, selStart: end + L, selEnd: end + L };
-	}
-
-	const before = value.slice(0, s);
-	const after = value.slice(e);
-	const sel = value.slice(s, e);
-
-	// Markers just outside the selection.
-	const outside = star
-		? starsInclude(runAtEnd(before, "*"), runAtStart(after, "*"), marker)
-		: before.endsWith(marker) && after.startsWith(marker);
-	if (outside) {
-		return { from: s - L, to: e + L, insert: sel, selStart: s - L, selEnd: e - L };
-	}
-
-	// Markers selected along with the text.
-	const inside = star
-		? sel.length > 2 * L && starsInclude(runAtStart(sel, "*"), runAtEnd(sel, "*"), marker)
-		: sel.length > 2 * L && sel.startsWith(marker) && sel.endsWith(marker);
-	if (inside) {
-		const inner = sel.slice(L, sel.length - L);
-		return { from: s, to: e, insert: inner, selStart: s, selEnd: s + inner.length };
-	}
-
-	return { from: s, to: e, insert: marker + sel + marker, selStart: s + L, selEnd: e + L };
-}
-
-/** Finds a highlight marker (of any colour) wrapped around, or just outside, the selection. */
-function findHighlightSpan(value: string, start: number, end: number): { color: HighlightColor; from: number; to: number; inner: string } | null {
-	let s = start;
-	let e = end;
-	while (s < e && /\s/.test(value[s])) s++;
-	while (e > s && /\s/.test(value[e - 1])) e--;
-	if (s === e) return null;
-
-	const before = value.slice(0, s);
-	const after = value.slice(e);
-	const sel = value.slice(s, e);
-
-	for (const [color, m] of Object.entries(HIGHLIGHT_MARKERS) as [HighlightColor, string][]) {
-		if (before.endsWith(m) && after.startsWith(m)) return { color, from: s - m.length, to: e + m.length, inner: sel };
-		if (sel.length > 2 * m.length && sel.startsWith(m) && sel.endsWith(m)) return { color, from: s, to: e, inner: sel.slice(m.length, sel.length - m.length) };
-	}
-	return null;
-}
-
-/** The highlight colour (if any) currently applied to the selection. */
-export function detectHighlight(value: string, start: number, end: number): HighlightColor | null {
-	return findHighlightSpan(value, start, end)?.color ?? null;
-}
-
-/**
- * Works out the edit that sets the selection's highlight to `color` (or clears it if null),
- * replacing any existing highlight colour it already had. Mirrors toggleMarker's whitespace
- * and empty-selection handling.
- */
-export function setHighlight(value: string, start: number, end: number, color: HighlightColor | null): Edit {
-	let s = start;
-	let e = end;
-	while (s < e && /\s/.test(value[s])) s++;
-	while (e > s && /\s/.test(value[e - 1])) e--;
-
-	if (s === e) {
-		if (!color) return { from: start, to: end, insert: value.slice(start, end), selStart: start, selEnd: end };
-		const marker = HIGHLIGHT_MARKERS[color];
-		return { from: start, to: end, insert: value.slice(start, end) + marker + marker, selStart: end + marker.length, selEnd: end + marker.length };
-	}
-
-	const span = findHighlightSpan(value, start, end);
-	const from = span?.from ?? s;
-	const to = span?.to ?? e;
-	const inner = span?.inner ?? value.slice(s, e);
-
-	if (!color) return { from, to, insert: inner, selStart: from, selEnd: from + inner.length };
-
-	const marker = HIGHLIGHT_MARKERS[color];
-	return { from, to, insert: marker + inner + marker, selStart: from + marker.length, selEnd: from + marker.length + inner.length };
 }
 
 // ---------------------------------------------------------------- [[wiki links]]
