@@ -13,19 +13,25 @@ Scripts are `.comic` files with their own editor. The editor and the export foll
 - **Block palette.** Drag or click Description, Dialogue, Caption, Thought, SFX or Freestyle into the script. Add your own block types and save reusable blocks, then organise them into sections.
 - **Quick-add row.** Each panel has a row of "+" buttons for adding blocks. Star (☆) the blocks you use most in the palette and only those appear there, in palette order, so the row stays short however big your palette gets.
 - **Speaker field.** Type `MAYA (off)` and it splits into speaker and modifier. Names autocomplete from the script.
-- **Formatting.** Bold, italic, underline and highlight (Ctrl+B / I / U, Ctrl+Shift+H). Freestyle blocks can also be aligned, indented, boxed or resized.
+- **Formatting.** Bold, italic, underline and highlight (Ctrl+B / I / U, Ctrl+Shift+H), from shortcuts or the bar that pops up over selected text. Highlights come in yellow, green, blue, pink and orange. Freestyle blocks can also be aligned, indented, boxed or resized.
 - **Read mode** (Ctrl+E) shows the script as it will print.
+
+![Adding a line of dialogue, then bolding and highlighting words](docs/writing.gif)
 
 **Organising**
 - **Pages list.** Jump to any page, drag to reorder, or collapse it to a rail of numbers. A line shows exactly where a dragged page will land.
 - **Swap or move pages** from a picker, without dragging.
-- **Comments** in a Google Docs-style margin, with `[[links]]` to your notes. Select some words and press Ctrl+Alt+M (or the comment button on the formatting bar) to comment on just those words, as in Word, and reply to comments in a thread.
-- **Mark for revision, pin, highlight and lock** any page, panel or block (right-click).
+- **Comments** in a Google Docs-style margin, with `[[links]]` to your notes. Select some words and press Ctrl+Alt+M (or the comment button on the formatting bar) to comment on just those words, as in Word. Reply to a comment to start a thread; long comments fold behind "Show more".
+- **Mark for revision, pin and lock** any page, panel or block (right-click).
 - **Undo** for every change, including deletes.
 
-| Read mode | Moving a page |
+![Commenting on a word, then replying](docs/comments.gif)
+
+| Dragging a block | Read mode |
 | --- | --- |
-| ![Read mode](docs/read-mode.png) | ![Drop line in the pages list](docs/page-drag.png) |
+| ![Dragging the SFX block up; balloon numbers follow](docs/drag.gif) | ![Read mode, then double-clicking a line to edit it](docs/read.gif) |
+
+![Drop line in the pages list](docs/page-drag.png)
 
 **Exporting**
 - **Export .docx** saves a Word file with the template's styles, a page break per comic page, margin comments, `[REVISE]` markers and your highlights. It then opens in Word (optional).
@@ -40,6 +46,7 @@ Scripts are `.comic` files with their own editor. The editor and the export foll
 | --- | --- |
 | Ctrl/Cmd + B / I / U | Bold / italic / underline |
 | Ctrl/Cmd + Shift + H | Highlight |
+| Ctrl/Cmd + Alt + M | Comment on the selected words |
 | Ctrl/Cmd + E | Edit / Read mode |
 | Ctrl/Cmd + Enter | New block of the same type |
 | Ctrl/Cmd + Shift + Enter | New panel |
