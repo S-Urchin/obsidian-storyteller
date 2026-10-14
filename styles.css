@@ -673,10 +673,20 @@
 .st-root .st-comment-buttons button { font-size: 12px; height: auto; padding: 4px 12px; border-radius: 14px; }
 /* long comments fold to a few lines (FOLD_LINES in view.ts) behind "Show more" */
 .st-comment-text.is-folded {
+	position: relative;
 	max-height: calc(1.45em * 4);
 	overflow: hidden;
-	-webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent);
-	mask-image: linear-gradient(to bottom, #000 55%, transparent);
+}
+/* The last lines fade into the card (a gradient in the card's colour, which is always solid). */
+.st-comment-text.is-folded::after {
+	content: "";
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: 45%;
+	background: linear-gradient(to bottom, transparent, var(--st-card-bg));
+	pointer-events: none;
 }
 .st-root .st-comment button.st-show-more {
 	display: block;
@@ -895,7 +905,6 @@
 	display: block;
 	width: 100%;
 	min-width: 0;
-	white-space: pre-wrap;
 	white-space: break-spaces;
 	word-break: break-word;
 	overflow-wrap: anywhere;
@@ -1488,10 +1497,10 @@
    Projects tab (sidebar): issues in order, and stats for the series
    =================================================================== */
 
-.st-projects {
+.view-content.st-projects {
 	display: flex;
 	flex-direction: column;
-	padding: 0 !important;
+	padding: 0;
 	overflow: hidden;
 }
 .st-proj-header {
