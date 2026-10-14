@@ -3,9 +3,14 @@
  *
  *   ***bold italic***   **bold**   *italic*   __underline__   ==highlight==
  *
+ * Highlights come in colours too: =g=green=g=  =b=blue=b=  =p=pink=p=  =o=orange=o=
+ * (plain == is yellow, same as before).
+ *
  * Markers don't nest (except *** for bold italic) and don't span lines, which keeps
  * the rules predictable while typing.
  */
+
+import { HighlightColor } from "./types";
 
 export interface Segment {
 	text: string;
@@ -14,10 +19,30 @@ export interface Segment {
 	bold?: boolean;
 	italic?: boolean;
 	underline?: boolean;
-	highlight?: boolean;
+	highlight?: HighlightColor;
 }
 
-const TOKEN = /(\*\*\*[^*\n]+?\*\*\*|\*\*[^*\n]+?\*\*|\*[^*\n]+?\*|__[^_\n]+?__|==[^=\n]+?==)/g;
+/** The marker text wrapped around highlighted text, one per colour. */
+export const HIGHLIGHT_MARKERS: Record<HighlightColor, string> = {
+	yellow: "==",
+	green: "=g=",
+	blue: "=b=",
+	pink: "=p=",
+	orange: "=o=",
+};
+
+const MARKER_TO_HIGHLIGHT: Record<string, HighlightColor> = Object.fromEntries(
+	Object.entries(HIGHLIGHT_MARKERS).map(([color, marker]) => [marker, color])
+) as Record<string, HighlightColor>;
+
+// Longest first, so "=g=" etc. aren't shadowed by the shorter "==" alternative.
+const ALL_MARKERS = ["***", "**", "*", "__", ...Object.values(HIGHLIGHT_MARKERS)].sort((a, b) => b.length - a.length);
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const highlightAlternatives = Object.values(HIGHLIGHT_MARKERS)
+	.map((m) => `${escapeRe(m)}[^=\\n]+?${escapeRe(m)}`)
+	.join("|");
+const TOKEN = new RegExp(`(\\*\\*\\*[^*\\n]+?\\*\\*\\*|\\*\\*[^*\\n]+?\\*\\*|\\*[^*\\n]+?\\*|__[^_\\n]+?__|${highlightAlternatives})`, "g");
 
 export function parseInline(text: string): Segment[] {
 	const out: Segment[] = [];
@@ -27,14 +52,14 @@ export function parseInline(text: string): Segment[] {
 	while ((m = TOKEN.exec(text))) {
 		if (m.index > last) out.push({ text: text.slice(last, m.index), marker: false });
 		const tok = m[0];
-		const n = tok.startsWith("***") ? 3 : tok.startsWith("**") || tok.startsWith("__") || tok.startsWith("==") ? 2 : 1;
-		const mark = tok.slice(0, n);
+		const mark = ALL_MARKERS.find((mk) => tok.startsWith(mk))!;
+		const n = mark.length;
 		const style: Partial<Segment> =
 			mark === "***" ? { bold: true, italic: true }
 			: mark === "**" ? { bold: true }
 			: mark === "*" ? { italic: true }
 			: mark === "__" ? { underline: true }
-			: { highlight: true };
+			: { highlight: MARKER_TO_HIGHLIGHT[mark] };
 		out.push({ text: mark, marker: true }, { text: tok.slice(n, -n), marker: false, ...style }, { text: mark, marker: true });
 		last = m.index + tok.length;
 	}
@@ -55,13 +80,13 @@ export function renderInline(parent: HTMLElement, text: string) {
 		if (seg.bold) span.addClass("st-b");
 		if (seg.italic) span.addClass("st-i");
 		if (seg.underline) span.addClass("st-u");
-		if (seg.highlight) span.addClass("st-mark");
+		if (seg.highlight) span.addClass("st-mark", "st-mark-" + seg.highlight);
 	}
 	// A trailing newline needs content after it, or the preview is a line short of the text box.
 	if (text.endsWith("\n") || !text) parent.appendText("​");
 }
 
-export type Marker = "**" | "*" | "__" | "==";
+export type Marker = "**" | "*" | "__";
 
 /** Counts how many `ch` characters run up to the end of `s` (or from its start). */
 function runAtEnd(s: string, ch: string) {
@@ -132,6 +157,58 @@ export function toggleMarker(value: string, start: number, end: number, marker: 
 	}
 
 	return { from: s, to: e, insert: marker + sel + marker, selStart: s + L, selEnd: e + L };
+}
+
+/** Finds a highlight marker (of any colour) wrapped around, or just outside, the selection. */
+function findHighlightSpan(value: string, start: number, end: number): { color: HighlightColor; from: number; to: number; inner: string } | null {
+	let s = start;
+	let e = end;
+	while (s < e && /\s/.test(value[s])) s++;
+	while (e > s && /\s/.test(value[e - 1])) e--;
+	if (s === e) return null;
+
+	const before = value.slice(0, s);
+	const after = value.slice(e);
+	const sel = value.slice(s, e);
+
+	for (const [color, m] of Object.entries(HIGHLIGHT_MARKERS) as [HighlightColor, string][]) {
+		if (before.endsWith(m) && after.startsWith(m)) return { color, from: s - m.length, to: e + m.length, inner: sel };
+		if (sel.length > 2 * m.length && sel.startsWith(m) && sel.endsWith(m)) return { color, from: s, to: e, inner: sel.slice(m.length, sel.length - m.length) };
+	}
+	return null;
+}
+
+/** The highlight colour (if any) currently applied to the selection. */
+export function detectHighlight(value: string, start: number, end: number): HighlightColor | null {
+	return findHighlightSpan(value, start, end)?.color ?? null;
+}
+
+/**
+ * Works out the edit that sets the selection's highlight to `color` (or clears it if null),
+ * replacing any existing highlight colour it already had. Mirrors toggleMarker's whitespace
+ * and empty-selection handling.
+ */
+export function setHighlight(value: string, start: number, end: number, color: HighlightColor | null): Edit {
+	let s = start;
+	let e = end;
+	while (s < e && /\s/.test(value[s])) s++;
+	while (e > s && /\s/.test(value[e - 1])) e--;
+
+	if (s === e) {
+		if (!color) return { from: start, to: end, insert: value.slice(start, end), selStart: start, selEnd: end };
+		const marker = HIGHLIGHT_MARKERS[color];
+		return { from: start, to: end, insert: value.slice(start, end) + marker + marker, selStart: end + marker.length, selEnd: end + marker.length };
+	}
+
+	const span = findHighlightSpan(value, start, end);
+	const from = span?.from ?? s;
+	const to = span?.to ?? e;
+	const inner = span?.inner ?? value.slice(s, e);
+
+	if (!color) return { from, to, insert: inner, selStart: from, selEnd: from + inner.length };
+
+	const marker = HIGHLIGHT_MARKERS[color];
+	return { from, to, insert: marker + inner + marker, selStart: from + marker.length, selEnd: from + marker.length + inner.length };
 }
 
 // ---------------------------------------------------------------- [[wiki links]]

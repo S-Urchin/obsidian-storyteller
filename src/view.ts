@@ -24,12 +24,12 @@ import {
 } from "./doc";
 import { MAX_PALETTE, MIN_PALETTE, VIEW_TYPE_COMIC, WIDE_PALETTE } from "./defaults";
 import { BlockTypeModal, ConfirmModal, HelpModal, HelpTab, PageChoice, PagePickerModal, PromptModal } from "./modals";
-import { Marker, parseInline, renderInline, toggleMarker } from "./format";
+import { detectHighlight, Edit, Marker, parseInline, renderInline, setHighlight, toggleMarker } from "./format";
 import { LinkSuggest, renderLinked } from "./links";
 import { exportFolderLabel, isSystemPath, shortPath } from "./locations";
 import { animateRender, capturePositions, motionAllowed, playOnce } from "./motion";
 import { ensureSections, isStarred, moveToSection, newSection, presetKey, starredItems, toggleStar, typeKey } from "./palette";
-import { Block, BlockPreset, BlockType, ComicDoc, FreeFormat, HIGHLIGHT_COLORS, ItemKind, ItemRef, Page, PaletteSection, Panel, PaperMode, SideNote } from "./types";
+import { Block, BlockPreset, BlockType, ComicDoc, FreeFormat, HighlightColor, HIGHLIGHT_COLORS, ItemKind, ItemRef, Page, PaletteSection, Panel, PaperMode, SideNote } from "./types";
 
 type DragPayload =
 	| { kind: "page" | "panel" | "block"; id: string }
@@ -94,6 +94,7 @@ export class ComicView extends TextFileView {
 	// Formatting: live preview layers, and the bar that appears over a text selection.
 	private mirrors = new WeakMap<HTMLTextAreaElement, HTMLElement>();
 	private formatBar: HTMLElement | null = null;
+	private highlightPopover: HTMLElement | null = null;
 	private formatTarget: HTMLTextAreaElement | null = null;
 	/** The last formatting change, so Ctrl+Z inside the text box can take it back. */
 	private formatUndo: { ta: HTMLTextAreaElement; before: string; after: string; selStart: number; selEnd: number } | null = null;
@@ -739,7 +740,7 @@ export class ComicView extends TextFileView {
 			if (seg.bold) span.addClass("st-b");
 			if (seg.italic) span.addClass("st-i");
 			if (seg.underline) span.addClass("st-u");
-			if (seg.highlight) span.addClass("st-mark");
+			if (seg.highlight) span.addClass("st-mark", "st-mark-" + seg.highlight);
 		}
 	}
 
@@ -1836,6 +1837,12 @@ export class ComicView extends TextFileView {
 				e.preventDefault();
 				return;
 			}
+			if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === "h") {
+				e.preventDefault();
+				e.stopPropagation();
+				this.toggleQuickHighlight(ta);
+				return;
+			}
 			const marker = this.shortcutMarker(e);
 			if (marker) {
 				e.preventDefault();
@@ -1887,14 +1894,13 @@ export class ComicView extends TextFileView {
 		btn("a-arrow-up", "A+", "Larger text", false, { size: order[Math.min(order.length - 1, i + 1)] });
 	}
 
-	/** Ctrl+B / Ctrl+I / Ctrl+U / Ctrl+Shift+H → the marker to toggle. */
+	/** Ctrl+B / Ctrl+I / Ctrl+U → the marker to toggle (Ctrl+Shift+H is handled separately: see toggleQuickHighlight). */
 	private shortcutMarker(e: KeyboardEvent): Marker | null {
-		if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
+		if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return null;
 		const k = e.key.toLowerCase();
-		if (!e.shiftKey && k === "b") return "**";
-		if (!e.shiftKey && k === "i") return "*";
-		if (!e.shiftKey && k === "u") return "__";
-		if (e.shiftKey && k === "h") return "==";
+		if (k === "b") return "**";
+		if (k === "i") return "*";
+		if (k === "u") return "__";
 		return null;
 	}
 
@@ -1926,13 +1932,8 @@ export class ComicView extends TextFileView {
 
 	// ---------------------------------------------------------------- formatting
 
-	/** Toggles a marker around the selection. Uses insertText so Ctrl+Z inside the field undoes it. */
-	private applyFormat(ta: HTMLTextAreaElement, marker: Marker) {
-		if (ta.readOnly) return new Notice("This block is locked.");
-		const value = ta.value;
-		const selStart = ta.selectionStart;
-		const selEnd = ta.selectionEnd;
-		const edit = toggleMarker(value, selStart, selEnd, marker);
+	/** Applies an already-computed edit to the field and remembers it for Ctrl+Z. */
+	private applyEdit(ta: HTMLTextAreaElement, value: string, selStart: number, selEnd: number, edit: Edit) {
 		ta.focus();
 		ta.setRangeText(edit.insert, edit.from, edit.to);
 		ta.setSelectionRange(edit.selStart, edit.selEnd);
@@ -1940,6 +1941,31 @@ export class ComicView extends TextFileView {
 		this.formatUndo = { ta, before: value, after: ta.value, selStart, selEnd };
 		ta.dispatchEvent(new Event("input", { bubbles: true }));
 		this.updateFormatBar(ta);
+	}
+
+	/** Toggles a marker around the selection. */
+	private applyFormat(ta: HTMLTextAreaElement, marker: Marker) {
+		if (ta.readOnly) return new Notice("This block is locked.");
+		const value = ta.value;
+		const selStart = ta.selectionStart;
+		const selEnd = ta.selectionEnd;
+		this.applyEdit(ta, value, selStart, selEnd, toggleMarker(value, selStart, selEnd, marker));
+	}
+
+	/** Sets (or clears) the highlight colour of the selected words only — never the whole block. */
+	private applyHighlight(ta: HTMLTextAreaElement, color: HighlightColor | null) {
+		if (ta.readOnly) return new Notice("This block is locked.");
+		const value = ta.value;
+		const selStart = ta.selectionStart;
+		const selEnd = ta.selectionEnd;
+		this.applyEdit(ta, value, selStart, selEnd, setHighlight(value, selStart, selEnd, color));
+		this.hideHighlightPopover();
+	}
+
+	/** Ctrl+Shift+H: toggles the default (yellow) highlight on the selected words. */
+	private toggleQuickHighlight(ta: HTMLTextAreaElement) {
+		const current = detectHighlight(ta.value, ta.selectionStart, ta.selectionEnd);
+		this.applyHighlight(ta, current === "yellow" ? null : "yellow");
 	}
 
 	/** Ctrl+Z right after a formatting change undoes that change (then normal undo continues). */
@@ -1968,6 +1994,11 @@ export class ComicView extends TextFileView {
 			const edit = toggleMarker(ta.value, ta.selectionStart, ta.selectionEnd, m);
 			b.toggleClass("is-active", edit.insert.length < edit.to - edit.from);
 		});
+		const current = detectHighlight(ta.value, ta.selectionStart, ta.selectionEnd);
+		const hlBtn = bar.querySelector<HTMLElement>(".st-format-btn-highlight");
+		hlBtn?.toggleClass("is-active", !!current);
+		hlBtn?.setCssProps({ "--st-active-highlight": current ? `var(--st-hl-${current})` : "" });
+		if (this.highlightPopover?.hasClass("is-visible")) this.fillHighlightPopover(current);
 		bar.addClass("is-visible");
 		this.positionFormatBar();
 	}
@@ -1978,7 +2009,6 @@ export class ComicView extends TextFileView {
 			["**", "bold", "Bold", "Ctrl+B"],
 			["*", "italic", "Italic", "Ctrl+I"],
 			["__", "underline", "Underline", "Ctrl+U"],
-			["==", "highlighter", "Highlight", "Ctrl+Shift+H"],
 		];
 		for (const [marker, icon, name, keys] of buttons) {
 			const b = bar.createEl("button", { cls: "st-format-btn", attr: { "aria-label": `${name} (${keys})`, "data-marker": marker } });
@@ -1987,7 +2017,72 @@ export class ComicView extends TextFileView {
 			b.addEventListener("mousedown", (e) => e.preventDefault());
 			b.addEventListener("click", () => this.formatTarget && this.applyFormat(this.formatTarget, marker));
 		}
+		const hlBtn = bar.createEl("button", {
+			cls: "st-format-btn st-format-btn-highlight",
+			attr: { "aria-label": "Highlight (Ctrl+Shift+H) — pick a colour", "aria-haspopup": "true" },
+		});
+		setIcon(hlBtn, "highlighter");
+		hlBtn.addEventListener("mousedown", (e) => e.preventDefault());
+		hlBtn.addEventListener("click", () => this.toggleHighlightPopover());
 		return bar;
+	}
+
+	/** Small colour-swatch dropdown for the highlighter button, like Word's highlight picker. */
+	private buildHighlightPopover(): HTMLElement {
+		const pop = createDiv({ cls: "st-highlight-pop", attr: { role: "menu", "aria-label": "Highlight colour" } });
+		for (const color of HIGHLIGHT_COLORS) {
+			const swatch = pop.createEl("button", { cls: "st-highlight-swatch", attr: { "data-color": color, "aria-label": color } });
+			swatch.setCssProps({ "--st-swatch": `var(--st-hl-${color})` });
+			swatch.addEventListener("mousedown", (e) => e.preventDefault());
+			swatch.addEventListener("click", () => {
+				const ta = this.formatTarget;
+				if (!ta) return;
+				const current = detectHighlight(ta.value, ta.selectionStart, ta.selectionEnd);
+				this.applyHighlight(ta, current === color ? null : color);
+			});
+		}
+		const remove = pop.createEl("button", { cls: "st-highlight-swatch st-highlight-none", attr: { "aria-label": "Remove highlight" } });
+		setIcon(remove, "x");
+		remove.addEventListener("mousedown", (e) => e.preventDefault());
+		remove.addEventListener("click", () => this.formatTarget && this.applyHighlight(this.formatTarget, null));
+		return pop;
+	}
+
+	/** Checks the swatch matching the selection's current highlight colour, if any. */
+	private fillHighlightPopover(current: HighlightColor | null) {
+		this.highlightPopover?.querySelectorAll<HTMLElement>(".st-highlight-swatch").forEach((s) => {
+			s.toggleClass("is-active", !!current && s.dataset.color === current);
+		});
+	}
+
+	private toggleHighlightPopover() {
+		const pop = (this.highlightPopover ??= this.buildHighlightPopover());
+		if (pop.hasClass("is-visible")) {
+			this.hideHighlightPopover();
+			return;
+		}
+		if (pop.parentElement !== this.contentEl) this.contentEl.appendChild(pop);
+		const ta = this.formatTarget;
+		if (ta) this.fillHighlightPopover(detectHighlight(ta.value, ta.selectionStart, ta.selectionEnd));
+		pop.addClass("is-visible");
+		this.positionHighlightPopover();
+	}
+
+	private hideHighlightPopover() {
+		this.highlightPopover?.removeClass("is-visible");
+	}
+
+	/** Anchors the popover under the highlighter button, inside the format bar. */
+	private positionHighlightPopover() {
+		const pop = this.highlightPopover;
+		const bar = this.formatBar;
+		const btn = bar?.querySelector<HTMLElement>(".st-format-btn-highlight");
+		if (!pop || !bar || !btn) return;
+		const at = btn.getBoundingClientRect();
+		const host = this.contentEl.getBoundingClientRect();
+		const left = Math.max(8, Math.min(at.left - host.left, host.width - pop.offsetWidth - 8));
+		const top = at.bottom - host.top + 6;
+		pop.setCssStyles({ left: left + "px", top: top + "px" });
 	}
 
 	/** Places the bar just above the start of the selection (below it near the top edge). */
@@ -2005,6 +2100,7 @@ export class ComicView extends TextFileView {
 		if (top < 44) top = at.bottom - host.top + 8; // no room above: drop below the line
 		left = Math.max(8, Math.min(left, host.width - w - 8));
 		bar.setCssStyles({ left: left + "px", top: top + "px" });
+		if (this.highlightPopover?.hasClass("is-visible")) this.positionHighlightPopover();
 	}
 
 	/** Screen position of a character offset, measured on the preview layer (same text, same layout). */
@@ -2029,6 +2125,7 @@ export class ComicView extends TextFileView {
 
 	private hideFormatBar() {
 		this.formatBar?.removeClass("is-visible");
+		this.hideHighlightPopover();
 		this.formatTarget = null;
 	}
 
@@ -2160,11 +2257,10 @@ export class ComicView extends TextFileView {
 		input.setCssStyles({ width: `calc(${chars}ch + 2px)` });
 	}
 
-	/** Container element shared by pages, panels and blocks: highlight, revision, lock and pin state. */
+	/** Container element shared by pages, panels and blocks: revision, lock and pin state. */
 	private itemShell(parent: HTMLElement, kind: ItemKind, ref: ItemRef): HTMLElement {
 		const item = ref.item;
 		const el = parent.createDiv({ cls: `st-item st-${kind}`, attr: { "data-id": item.id, "data-drag-item": "" } });
-		if (item.highlight) el.addClass("st-hl-" + item.highlight);
 		el.toggleClass("is-revision", item.revision);
 		el.toggleClass("is-locked", isLocked(ref));
 		el.toggleClass("is-pinned", item.pinned);
@@ -2298,14 +2394,6 @@ export class ComicView extends TextFileView {
 		menu.addItem((i) => i.setTitle("Note or comment").setIcon("message-square-plus").onClick(() => this.startComment(item.id)));
 		menu.addSeparator();
 
-		this.submenu(menu, "Highlight", "highlighter", (m) => {
-			for (const c of HIGHLIGHT_COLORS) {
-				m.addItem((i) =>
-					i.setTitle(c[0].toUpperCase() + c.slice(1)).setChecked(item.highlight === c).onClick(() => this.mutate(() => (item.highlight = c)))
-				);
-			}
-			if (item.highlight) m.addItem((i) => i.setTitle("Remove highlight").onClick(() => this.mutate(() => (item.highlight = null))));
-		});
 		menu.addItem((i) => i.setTitle(item.pinned ? "Unpin" : "Pin").setIcon("pin").onClick(() => this.mutate(() => (item.pinned = !item.pinned))));
 		menu.addItem((i) =>
 			i.setTitle(item.revision ? "Clear revision mark" : "Mark for revision").setIcon("flag").onClick(() => this.mutate(() => (item.revision = !item.revision)))
@@ -3088,7 +3176,6 @@ export class ComicView extends TextFileView {
 		}
 		for (const ref of refs) {
 			const card = body.createDiv("st-card is-clickable");
-			if (ref.item.highlight) card.addClass("st-hl-" + ref.item.highlight);
 			const top = card.createDiv("st-card-top");
 			top.createSpan({ cls: "st-card-loc", text: describeRef(ref, this.plugin.settings) });
 			this.iconBtn(top, "x", flag === "pin" ? "Unpin" : "Clear revision mark", () =>

@@ -198,7 +198,7 @@ export class StorytellerSettingTab extends PluginSettingTab {
 			);
 		toggle("Comments", "Unresolved comments become Word margin comments.", "exportComments");
 		toggle("Revision markers", "Prefix items marked for revision with a red [REVISE].", "exportRevisionMarks");
-		toggle("Highlights", "Carry highlights (and ==marked text==) into Word.", "exportHighlights");
+		toggle("Highlights", "Carry ==marked text== highlights into Word.", "exportHighlights");
 		toggle("Page break per page", "Start every comic page on a new Word page.", "exportPageBreaks");
 		new Setting(containerEl)
 			.setName("Word font")

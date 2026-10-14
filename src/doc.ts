@@ -12,8 +12,6 @@ import {
 	StorytellerSettings,
 	DEFAULT_FREE_FORMAT,
 	FreeFormat,
-	HIGHLIGHT_COLORS,
-	HighlightColor,
 	SideNote,
 } from "./types";
 
@@ -22,7 +20,7 @@ export function uid(): string {
 }
 
 function meta(): ItemMeta {
-	return { id: uid(), locked: false, revision: false, pinned: false, highlight: null, notes: [] };
+	return { id: uid(), locked: false, revision: false, pinned: false, notes: [] };
 }
 
 export function findType(settings: StorytellerSettings, typeId: string): BlockType {
@@ -113,7 +111,6 @@ function loadMeta(o: Loose): ItemMeta {
 		locked: !!o.locked,
 		revision: !!o.revision,
 		pinned: !!o.pinned,
-		highlight: HIGHLIGHT_COLORS.includes(o.highlight as HighlightColor) ? (o.highlight as HighlightColor) : null,
 		notes: list(o.notes).map(loadNote),
 	};
 }

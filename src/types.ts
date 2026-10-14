@@ -1,4 +1,4 @@
-/** Highlight colours available for any page, panel or block. */
+/** Highlight colours available for ==marked== text. */
 export type HighlightColor = "yellow" | "green" | "blue" | "pink" | "orange";
 
 export const HIGHLIGHT_COLORS: HighlightColor[] = ["yellow", "green", "blue", "pink", "orange"];
@@ -17,7 +17,6 @@ export interface ItemMeta {
 	locked: boolean;
 	revision: boolean;
 	pinned: boolean;
-	highlight: HighlightColor | null;
 	notes: SideNote[];
 }
 

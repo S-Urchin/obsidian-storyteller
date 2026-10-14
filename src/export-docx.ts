@@ -61,7 +61,7 @@ export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): 
 		});
 
 	/** Turns ***bold italic***, **bold**, *italic*, __underline__ and ==highlight== (and line breaks) into runs. */
-	const inlineRuns = (text: string, base: RunStyle): TextRun[] => {
+	const inlineRuns = (text: string, base: RunStyle = {}): TextRun[] => {
 		const runs: TextRun[] = [];
 		for (const seg of parseInline(text)) {
 			if (seg.marker) continue;
@@ -70,7 +70,7 @@ export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): 
 				bold: base.bold || seg.bold,
 				italics: base.italics || seg.italic,
 				underline: seg.underline,
-				highlight: seg.highlight ? base.highlight ?? "yellow" : base.highlight,
+				highlight: seg.highlight,
 			};
 			seg.text.split("\n").forEach((line, i) => {
 				if (i > 0) runs.push(new TextRun({ break: 1, size: base.size ?? SIZE }));
@@ -114,9 +114,9 @@ export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): 
 		return new Paragraph({
 			style: "DIALOGUE",
 			children: decorate(block, [
-				run(label, { highlight: block.highlight }),
+				run(label),
 				new TextRun({ children: [new Tab()], size: SIZE }),
-				...inlineRuns(block.text, { highlight: block.highlight }),
+				...inlineRuns(block.text),
 			]),
 		});
 	};
@@ -131,7 +131,7 @@ export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): 
 			alignment: f.align === "center" ? AlignmentType.CENTER : f.align === "right" ? AlignmentType.RIGHT : AlignmentType.LEFT,
 			indent: f.indent ? { left: TWO_INCHES } : undefined,
 			border: f.box ? { top: edge, bottom: edge, left: edge, right: edge } : undefined,
-			children: decorate(block, inlineRuns(block.text, { size, highlight: block.highlight })),
+			children: decorate(block, inlineRuns(block.text, { size })),
 		});
 	};
 
@@ -141,16 +141,16 @@ export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): 
 
 	doc.pages.forEach((page, pi) => {
 		body.push(
-			action(decorate(page, [run(pageLabel(pi, settings.pageNumberStyle), { bold: true, highlight: page.highlight })]), settings.exportPageBreaks && pi > 0)
+			action(decorate(page, [run(pageLabel(pi, settings.pageNumberStyle), { bold: true })]), settings.exportPageBreaks && pi > 0)
 		);
 
 		page.panels.forEach((panel, ni) => {
 			const blocks = [...panel.blocks];
-			const label = run(panelLabel(ni) + "  ", { bold: true, highlight: panel.highlight });
+			const label = run(panelLabel(ni) + "  ", { bold: true });
 			// The first description runs on after "Panel N:", as in the template.
 			const first = blocks[0] && findType(settings, blocks[0].typeId).style === "description" ? blocks.shift()! : null;
 			if (first) {
-				body.push(action(decorate(panel, [label, ...decorate(first, inlineRuns(first.text, { highlight: first.highlight }))])));
+				body.push(action(decorate(panel, [label, ...decorate(first, inlineRuns(first.text))])));
 			} else {
 				body.push(action(decorate(panel, [label])));
 			}
@@ -160,7 +160,7 @@ export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): 
 				else if (style === "freestyle") {
 					if (block.text.trim() || block.notes.length || block.revision) body.push(freestyle(block));
 				} else if (block.text.trim() || block.notes.length || block.revision) {
-					body.push(action(decorate(block, inlineRuns(block.text, { highlight: block.highlight }))));
+					body.push(action(decorate(block, inlineRuns(block.text))));
 				}
 			}
 		});

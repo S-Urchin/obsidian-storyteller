@@ -178,8 +178,8 @@ export class HelpModal extends Modal {
 			["Write a panel", "Each page starts with panels. Type the description right after “Panel 1:”. Add lettering with the + Dialogue / + Caption / + SFX buttons under a panel (hover to see them), or drag blocks in from the palette on the left."],
 			["Name the speaker", "In a dialogue block, type the character's name, with an optional modifier in brackets, for example MAYA (off). Names you've used before autocomplete. Balloon numbers and page and panel numbers fill themselves in."],
 			["Rearrange", "Hover over anything and drag its ⠿ grip to move it, even into another page. Numbers update automatically. Ctrl+Z undoes any change."],
-			["Right-click for more", "Right-click a page, panel or block to comment on it, highlight it, pin it, lock it, mark it for revision, duplicate it or delete it."],
-			["Format text", "Select some text and use the small bar that appears, or press Ctrl+B, Ctrl+I, Ctrl+U or Ctrl+Shift+H."],
+			["Right-click for more", "Right-click a page, panel or block to comment on it, pin it, lock it, mark it for revision, duplicate it or delete it."],
+			["Format text", "Select some text and use the small bar that appears, or press Ctrl+B, Ctrl+I, Ctrl+U or Ctrl+Shift+H. The highlighter button opens a colour picker, just like Word's — only the selected words get coloured, not the whole block."],
 			["Review", "Click Read in the top-left (or press Ctrl+E) to see the clean script as it will print. Double-click any line to go back and edit it."],
 			["Export", "Click Export .docx. The Word file is saved in the “Exported” folder of your vault, ready for final edits in Word."],
 		];
@@ -222,7 +222,7 @@ export class HelpModal extends Modal {
 					["Ctrl+I", "*Italic*"],
 					["Ctrl+B then Ctrl+I", "***Bold italic*** (the template's emphasis)"],
 					["Ctrl+U", "__Underline__"],
-					["Ctrl+Shift+H", "==Highlight=="],
+					["Ctrl+Shift+H", "==Highlight== the selected words (yellow); click the toolbar button for other colours"],
 				],
 			],
 			[
@@ -241,7 +241,7 @@ export class HelpModal extends Modal {
 				"Structure",
 				[
 					["Ctrl+Z / Ctrl+Shift+Z", "Undo / redo (outside a field)"],
-					["Right-click", "Comment, highlight, pin, lock, revise, move, delete…"],
+					["Right-click", "Comment, pin, lock, revise, move, delete…"],
 					["Drag the ⠿ grip", "Move pages, panels and blocks"],
 					["Double-click a heading", "Collapse or expand it"],
 					["Shift+right-click", "Normal text menu (spelling, paste)"],
