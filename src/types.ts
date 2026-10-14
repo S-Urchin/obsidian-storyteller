@@ -132,6 +132,21 @@ export interface ItemRef {
 	blockIndex?: number;
 }
 
+/**
+ * A series of comic scripts kept together, like a Longform project: its issues live in one
+ * vault folder, are numbered in reading order, and export their Word files to one place.
+ */
+export interface ComicProject {
+	id: string;
+	name: string;
+	/** Vault folder new issues are created in ("" for the vault root). */
+	folder: string;
+	/** Where this project's .docx files go (vault folder or full path on the computer); null uses the export folders from settings. */
+	exportFolder: string | null;
+	/** Issue files (vault paths) in reading order: issue N is issues[N - 1]. A file belongs to at most one project. */
+	issues: string[];
+}
+
 export type PaperMode = "auto" | "light" | "dark";
 export type PageNumberStyle = "digits" | "words";
 export type BalloonScope = "page" | "panel" | "off";
@@ -173,4 +188,7 @@ export interface StorytellerSettings {
 	scriptFolders: string[];
 	lastScriptFolder: string | null;
 	openAfterExport: boolean;
+	projects: ComicProject[];
+	/** Project shown in the Projects tab. */
+	activeProject: string | null;
 }

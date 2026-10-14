@@ -9,7 +9,7 @@ export const DEFAULT_BLOCK_TYPES: BlockType[] = [
 	{ id: "freestyle", name: "Freestyle", color: "#14b8a6", style: "freestyle", numbered: false, defaultSpeaker: "", fixedSpeaker: false, defaultText: "" },
 ];
 
-export const SETTINGS_SCHEMA = 7;
+export const SETTINGS_SCHEMA = 8;
 export const EXPORT_FOLDER = "Exported";
 
 export const DEFAULT_SETTINGS: StorytellerSettings = {
@@ -39,6 +39,8 @@ export const DEFAULT_SETTINGS: StorytellerSettings = {
 	scriptFolders: [],
 	lastScriptFolder: null,
 	openAfterExport: true,
+	projects: [],
+	activeProject: null,
 };
 
 /** Palette width at which block cards switch to inline editors. */
@@ -48,3 +50,4 @@ export const MAX_PALETTE = 560;
 
 export const FILE_EXTENSION = "comic";
 export const VIEW_TYPE_COMIC = "storyteller-comic-view";
+export const VIEW_TYPE_PROJECTS = "storyteller-projects-view";

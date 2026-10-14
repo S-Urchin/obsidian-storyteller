@@ -948,12 +948,12 @@ export class ComicView extends TextFileView {
 		const arrow = group.createEl("button", { cls: "st-export-arrow mod-cta", attr: { "aria-label": "Choose export folder", "aria-haspopup": "menu" } });
 		setIcon(arrow, "chevron-down");
 		const describe = () => {
-			const folder = this.plugin.exportFolders()[0] ?? "";
+			const folder = this.plugin.exportFolders(false, this.file)[0] ?? "";
 			exp.setAttr("aria-label", `Export to ${exportFolderLabel(folder)}`);
 		};
 		describe();
 		exp.addEventListener("click", () => {
-			void this.plugin.exportView(this, this.plugin.exportFolders()[0] ?? "").then(describe);
+			void this.plugin.exportView(this, this.plugin.exportFolders(false, this.file)[0] ?? "").then(describe);
 		});
 		arrow.addEventListener("click", (e) => {
 			e.stopPropagation();
@@ -961,8 +961,8 @@ export class ComicView extends TextFileView {
 			// menu that closed a moment ago was closed by this very click: leave it closed.
 			if (this.exportMenu) return this.exportMenu.hide();
 			if (Date.now() - this.exportMenuClosedAt < 300) return;
-			const current = this.plugin.exportFolders()[0] ?? "";
-			const folders = this.plugin.exportFolders(true);
+			const current = this.plugin.exportFolders(false, this.file)[0] ?? "";
+			const folders = this.plugin.exportFolders(true, this.file);
 			const menu = new Menu();
 			menu.addItem((i) => i.setTitle("Export to…").setIsLabel(true));
 			for (const folder of folders.length ? folders : [""]) {
