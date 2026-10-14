@@ -133,6 +133,8 @@ npm run build   # then copy main.js, manifest.json and styles.css as above
 
 Needs Obsidian 1.5.7 or newer.
 
+**Check a download:** releases are built by GitHub Actions from the tagged source and come with signed build attestations. To confirm a file is the one built from this repository, run `gh attestation verify main.js --repo S-Urchin/obsidian-storyteller` (the same works for `styles.css` and `manifest.json`).
+
 ## Tips
 
 - **Can't see the .docx in Obsidian?** Turn on *Settings → Files and links → Detect all file extensions*, or use **Show in file manager** in the export message.
