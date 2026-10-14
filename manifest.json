@@ -1,7 +1,7 @@
 {
   "id": "storyteller-comic-drafter",
-  "name": "Storyteller Comic Drafter",
-  "version": "0.6.1",
+  "name": "Storyteller: Comic Drafter",
+  "version": "0.6.2",
   "minAppVersion": "1.5.7",
   "description": "Draft comic scripts with drag-and-drop page, panel and lettering blocks, keep a series of issues in order with stats, and export to an editable Word file.",
   "author": "Jimiel Balitayo",
