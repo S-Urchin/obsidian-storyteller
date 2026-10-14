@@ -18,18 +18,19 @@ import {
 	pageLabel,
 	panelLabel,
 	panelLetteringWords,
+	remapNoteRanges,
 	uid,
 	walk,
 	wordCount,
 } from "./doc";
 import { MAX_PALETTE, MIN_PALETTE, VIEW_TYPE_COMIC, WIDE_PALETTE } from "./defaults";
 import { BlockTypeModal, ConfirmModal, HelpModal, HelpTab, PageChoice, PagePickerModal, PromptModal } from "./modals";
-import { detectHighlight, Edit, Marker, parseInline, renderInline, setHighlight, toggleMarker } from "./format";
+import { CommentSpan, detectHighlight, Edit, Marker, parseInline, renderInline, setHighlight, toggleMarker } from "./format";
 import { LinkSuggest, renderLinked } from "./links";
 import { exportFolderLabel, isSystemPath, shortPath } from "./locations";
 import { animateRender, capturePositions, motionAllowed, playOnce } from "./motion";
 import { ensureSections, isStarred, moveToSection, newSection, presetKey, starredItems, toggleStar, typeKey } from "./palette";
-import { Block, BlockPreset, BlockType, ComicDoc, FreeFormat, HighlightColor, HIGHLIGHT_COLORS, ItemKind, ItemRef, Page, PaletteSection, Panel, PaperMode, SideNote } from "./types";
+import { Block, BlockPreset, BlockType, ComicDoc, FreeFormat, HighlightColor, HIGHLIGHT_COLORS, ItemKind, ItemRef, NoteRange, NoteReply, Page, PaletteSection, Panel, PaperMode, SideNote } from "./types";
 
 type DragPayload =
 	| { kind: "page" | "panel" | "block"; id: string }
@@ -65,6 +66,8 @@ interface DropPlan {
 	target: HTMLElement | null;
 }
 const CARD_GAP = 8;
+/** Comment and reply text longer than this many lines is folded behind "Show more". */
+const FOLD_LINES = 4;
 
 export class ComicView extends TextFileView {
 	doc: ComicDoc;
@@ -93,6 +96,8 @@ export class ComicView extends TextFileView {
 
 	// Formatting: live preview layers, and the bar that appears over a text selection.
 	private mirrors = new WeakMap<HTMLTextAreaElement, HTMLElement>();
+	/** The block each text box edits, for painting the words that have comments. */
+	private textBlocks = new WeakMap<HTMLTextAreaElement, Block>();
 	private formatBar: HTMLElement | null = null;
 	private highlightPopover: HTMLElement | null = null;
 	private formatTarget: HTMLTextAreaElement | null = null;
@@ -122,6 +127,12 @@ export class ComicView extends TextFileView {
 	private marginOpen = true;
 	private showResolved = false;
 	private draftTarget: string | null = null;
+	/** Set when the draft comment is on selected words rather than the whole item. */
+	private draftRange: NoteRange | null = null;
+	/** Unsent reply text per comment. */
+	private replyDrafts = new Map<string, string>();
+	/** Comments and replies opened with "Show more". */
+	private expandedText = new Set<string>();
 	private editingNote: string | null = null;
 	private activeNote: string | null = null;
 	private marginEl: HTMLElement | null = null;
@@ -225,6 +236,7 @@ export class ComicView extends TextFileView {
 			this.shownItems = null;
 			this.shownCards = null;
 			this.draftTarget = null;
+			this.draftRange = null;
 			this.editingNote = null;
 			this.activeNote = null;
 		}
@@ -242,7 +254,7 @@ export class ComicView extends TextFileView {
 				changed = true;
 				for (const b of notes) {
 					if (b.text.trim()) {
-						panel.notes.push({ id: uid(), text: b.text.trim(), author: this.plugin.settings.authorName, created: Date.now(), resolved: false });
+						panel.notes.push({ id: uid(), text: b.text.trim(), author: this.plugin.settings.authorName, created: Date.now(), resolved: false, replies: [] });
 					}
 				}
 				panel.blocks = panel.blocks.filter((b) => b.typeId !== "note");
@@ -641,6 +653,7 @@ export class ComicView extends TextFileView {
 		this.readMode = on;
 		this.hideFormatBar();
 		this.draftTarget = null;
+		this.draftRange = null;
 		this.editingNote = null;
 		// A different layout: don't glide items between the two.
 		this.shownItems = null;
@@ -1817,10 +1830,16 @@ export class ComicView extends TextFileView {
 
 		ta.value = block.text;
 		ta.readOnly = locked;
-		renderInline(this.mirrors.get(ta)!, ta.value);
+		this.textBlocks.set(ta, block);
+		this.renderMirror(ta);
 		this.bindText(ta, (v) => {
+			const moved = remapNoteRanges(block.notes, block.text, v, ta.selectionStart);
 			block.text = v;
 			this.updatePanelCount(panel);
+			if (moved) {
+				this.renderMirror(ta);
+				this.refreshCardAnchors(block);
+			}
 		});
 		ta.addEventListener("input", () => {
 			this.autosize(ta);
@@ -1841,6 +1860,13 @@ export class ComicView extends TextFileView {
 				e.preventDefault();
 				e.stopPropagation();
 				this.toggleQuickHighlight(ta);
+				return;
+			}
+			// Ctrl+Alt+M, as in Word: comment on the selected words.
+			if (mod && e.altKey && !e.shiftKey && e.code === "KeyM") {
+				e.preventDefault();
+				e.stopPropagation();
+				this.commentOnSelection(ta);
 				return;
 			}
 			const marker = this.shortcutMarker(e);
@@ -1915,10 +1941,13 @@ export class ComicView extends TextFileView {
 		const ta = wrap.createEl("textarea", { cls, attr: { rows: "1", placeholder } });
 		this.mirrors.set(ta, mirror);
 		ta.addEventListener("input", () => {
-			renderInline(mirror, ta.value);
+			this.renderMirror(ta);
 			if (this.formatTarget === ta) this.positionFormatBar();
 		});
-		const check = () => window.setTimeout(() => this.updateFormatBar(ta), 0);
+		const check = () => window.setTimeout(() => {
+			this.updateFormatBar(ta);
+			this.activateNoteAtCaret(ta);
+		}, 0);
 		ta.addEventListener("select", check);
 		ta.addEventListener("mouseup", check);
 		ta.addEventListener("keyup", (e) => {
@@ -1928,6 +1957,64 @@ export class ComicView extends TextFileView {
 			if (this.formatTarget === ta && document.activeElement !== ta) this.hideFormatBar();
 		}, 0));
 		return ta;
+	}
+
+	/** Repaints a text box's styled copy, marking the words that have comments (and the draft one). */
+	private renderMirror(ta: HTMLTextAreaElement) {
+		const mirror = this.mirrors.get(ta);
+		if (!mirror) return;
+		const block = this.textBlocks.get(ta);
+		const spans: CommentSpan[] = [];
+		if (block) {
+			for (const n of this.visibleNotes(block.notes)) {
+				if (n.range) spans.push({ start: n.range.start, end: n.range.end, active: n.id === this.activeNote });
+			}
+			if (this.draftRange && this.draftTarget === block.id) spans.push({ ...this.draftRange, active: true });
+		}
+		renderInline(mirror, ta.value, spans);
+	}
+
+	private repaintMirrors() {
+		this.scriptEl?.querySelectorAll<HTMLTextAreaElement>(".st-sheet textarea.st-text").forEach((ta) => {
+			if (this.textBlocks.get(ta)?.notes.some((n) => n.range)) this.renderMirror(ta);
+		});
+	}
+
+	/** Putting the cursor in commented words brings their comment forward, as in Word. */
+	private activateNoteAtCaret(ta: HTMLTextAreaElement) {
+		const block = this.textBlocks.get(ta);
+		if (!block || !this.marginOpen || document.activeElement !== ta) return;
+		const at = ta.selectionStart;
+		const hits = this.visibleNotes(block.notes).filter((n) => n.range && n.range.start < n.range.end && n.range.start <= at && at <= n.range.end);
+		if (!hits.length) return;
+		// Innermost first, when comments overlap.
+		hits.sort((a, b) => a.range!.end - a.range!.start - (b.range!.end - b.range!.start));
+		if (hits[0].id !== this.activeNote) this.setActiveNote(hits[0].id);
+	}
+
+	/** Opens a draft comment on just the selected words of a block. */
+	private commentOnSelection(ta: HTMLTextAreaElement) {
+		const block = this.textBlocks.get(ta);
+		if (!block) return;
+		let start = ta.selectionStart;
+		let end = ta.selectionEnd;
+		while (start < end && /\s/.test(ta.value[start])) start++;
+		while (end > start && /\s/.test(ta.value[end - 1])) end--;
+		if (start === end) return new Notice("Select the words you want to comment on.");
+		this.hideFormatBar();
+		this.draftTarget = block.id;
+		this.draftRange = { start, end };
+		this.editingNote = null;
+		this.marginOpen = true;
+		this.renderAll();
+	}
+
+	/** Keeps a block's word comment cards level with their words as the text changes. */
+	private refreshCardAnchors(block: Block) {
+		for (const n of block.notes) {
+			if (n.range) this.marginEl?.querySelector<HTMLElement>(`.st-comment[data-note="${n.id}"]`)?.setAttr("data-start", String(n.range.start));
+		}
+		this.queueLayout();
 	}
 
 	// ---------------------------------------------------------------- formatting
@@ -2024,6 +2111,11 @@ export class ComicView extends TextFileView {
 		setIcon(hlBtn, "highlighter");
 		hlBtn.addEventListener("mousedown", (e) => e.preventDefault());
 		hlBtn.addEventListener("click", () => this.toggleHighlightPopover());
+		bar.createSpan("st-format-sep");
+		const cmtBtn = bar.createEl("button", { cls: "st-format-btn st-format-btn-comment", attr: { "aria-label": "Comment on these words (Ctrl+Alt+M)" } });
+		setIcon(cmtBtn, "message-square-plus");
+		cmtBtn.addEventListener("mousedown", (e) => e.preventDefault());
+		cmtBtn.addEventListener("click", () => this.formatTarget && this.commentOnSelection(this.formatTarget));
 		return bar;
 	}
 
@@ -2264,7 +2356,8 @@ export class ComicView extends TextFileView {
 		el.toggleClass("is-revision", item.revision);
 		el.toggleClass("is-locked", isLocked(ref));
 		el.toggleClass("is-pinned", item.pinned);
-		el.toggleClass("has-comments", item.notes.some((n) => !n.resolved));
+		// Comments on some of the words mark just those words, not the whole item.
+		el.toggleClass("has-comments", item.notes.some((n) => !n.resolved && !n.range));
 		el.addEventListener("contextmenu", (e) => {
 			// Shift+right-click keeps the normal text menu (spellcheck, paste…).
 			if (e.shiftKey) return;
@@ -2272,10 +2365,10 @@ export class ComicView extends TextFileView {
 			e.stopPropagation();
 			this.itemMenu(e, ref);
 		});
-		if (item.notes.length) {
+		if (item.notes.some((n) => !n.range)) {
 			el.addEventListener("focusin", (e) => {
 				if ((e.target as HTMLElement).closest("[data-id]") !== el) return;
-				const note = item.notes.find((n) => this.showResolved || !n.resolved);
+				const note = item.notes.find((n) => !n.range && (this.showResolved || !n.resolved));
 				if (note && this.marginOpen) this.setActiveNote(note.id);
 			});
 		}
@@ -2391,7 +2484,11 @@ export class ComicView extends TextFileView {
 		const containerLocked = ref.kind === "page" ? false : ref.kind === "panel" ? ref.page.locked : !!(ref.page.locked || ref.panel?.locked);
 		const settings = this.plugin.settings;
 
-		menu.addItem((i) => i.setTitle("Note or comment").setIcon("message-square-plus").onClick(() => this.startComment(item.id)));
+		const ta = (e.target as HTMLElement).closest?.<HTMLTextAreaElement>("textarea.st-text");
+		if (ta && ta.selectionStart !== ta.selectionEnd && this.textBlocks.get(ta) === item) {
+			menu.addItem((i) => i.setTitle("Comment on selected words").setIcon("quote").onClick(() => this.commentOnSelection(ta)));
+		}
+		menu.addItem((i) => i.setTitle(ref.kind === "block" ? "Comment on whole block" : "Note or comment").setIcon("message-square-plus").onClick(() => this.startComment(item.id)));
 		menu.addSeparator();
 
 		menu.addItem((i) => i.setTitle(item.pinned ? "Unpin" : "Pin").setIcon("pin").onClick(() => this.mutate(() => (item.pinned = !item.pinned))));
@@ -2625,6 +2722,7 @@ export class ComicView extends TextFileView {
 		if (!ref) return;
 		if ((ref.kind !== "page" && ref.page.collapsed) || (ref.kind === "block" && ref.panel?.collapsed)) this.jumpTo(id);
 		this.draftTarget = id;
+		this.draftRange = null;
 		this.editingNote = null;
 		this.marginOpen = true;
 		this.renderAll();
@@ -2683,6 +2781,7 @@ export class ComicView extends TextFileView {
 
 	private renderCommentCard(layer: HTMLElement, ref: ItemRef, note: SideNote) {
 		const card = layer.createDiv({ cls: "st-comment", attr: { "data-anchor": ref.item.id, "data-note": note.id } });
+		if (note.range) card.setAttr("data-start", String(note.range.start));
 		card.toggleClass("is-resolved", note.resolved);
 		card.toggleClass("is-active", this.activeNote === note.id);
 		const editing = this.editingNote === note.id;
@@ -2737,8 +2836,15 @@ export class ComicView extends TextFileView {
 			this.commentButtons(card, "Save", save, cancel, suggest);
 			this.commentKeys(input, save, cancel);
 		} else {
-			renderLinked(card.createDiv("st-comment-text"), note.text, this.app, this.file?.path ?? "", this);
+			const text = card.createDiv("st-comment-text");
+			renderLinked(text, note.text, this.app, this.file?.path ?? "", this);
+			this.foldLong(text, note.id);
 		}
+		if (note.replies.length) {
+			const thread = card.createDiv("st-comment-thread");
+			for (const reply of note.replies) this.renderReply(thread, note, reply);
+		}
+		if (!note.resolved && !editing) this.replyBox(card, note);
 
 		card.createDiv({ cls: "st-comment-loc", text: describeRef(ref, this.plugin.settings) });
 		card.addEventListener("click", (e) => {
@@ -2749,7 +2855,9 @@ export class ComicView extends TextFileView {
 	}
 
 	private renderDraftCard(layer: HTMLElement, ref: ItemRef) {
+		const range = this.draftRange;
 		const card = layer.createDiv({ cls: "st-comment st-comment-draft is-active", attr: { "data-anchor": ref.item.id } });
+		if (range) card.setAttr("data-start", String(range.start));
 		const top = card.createDiv("st-comment-top");
 		const author = this.plugin.settings.authorName;
 		top.createDiv({ cls: "st-avatar", text: author.slice(0, 1).toUpperCase() });
@@ -2759,18 +2867,106 @@ export class ComicView extends TextFileView {
 		const submit = () => {
 			const text = input.value.trim();
 			if (!text) return;
-			const note: SideNote = { id: uid(), text, author, created: Date.now(), resolved: false };
+			const note: SideNote = { id: uid(), text, author, created: Date.now(), resolved: false, replies: [] };
+			if (range) note.range = { ...range };
 			this.draftTarget = null;
+			this.draftRange = null;
 			this.activeNote = note.id;
 			this.mutate(() => ref.item.notes.push(note));
 		};
 		const cancel = () => {
 			this.draftTarget = null;
+			this.draftRange = null;
 			this.renderAll();
 		};
 		this.commentButtons(card, "Comment", submit, cancel, suggest);
 		this.commentKeys(input, submit, cancel);
 		card.createDiv({ cls: "st-comment-loc", text: describeRef(ref, this.plugin.settings) });
+	}
+
+	private renderReply(thread: HTMLElement, note: SideNote, reply: NoteReply) {
+		const row = thread.createDiv({ cls: "st-reply", attr: { "data-reply": reply.id } });
+		const top = row.createDiv("st-comment-top");
+		const author = reply.author || this.plugin.settings.authorName;
+		top.createDiv({ cls: "st-avatar st-avatar-small", text: author.slice(0, 1).toUpperCase() });
+		const who = top.createDiv("st-comment-who");
+		who.createDiv({ cls: "st-comment-author", text: author });
+		who.createDiv({ cls: "st-comment-date", text: this.formatDate(reply.created) });
+		this.iconBtn(top, "trash-2", "Delete reply", () => {
+			this.mutate(() => note.replies.remove(reply));
+			this.undoNotice("Deleted reply.");
+		}, "st-reply-delete");
+		const text = row.createDiv("st-comment-text");
+		renderLinked(text, reply.text, this.app, this.file?.path ?? "", this);
+		this.foldLong(text, reply.id);
+	}
+
+	/** Folds long comment text to a few lines, with a "Show more" / "Show less" toggle under it. */
+	private foldLong(text: HTMLElement, id: string) {
+		const open = this.expandedText.has(id);
+		text.toggleClass("is-folded", !open);
+		// Measured once the card is on screen; short text is left alone.
+		window.requestAnimationFrame(() => {
+			if (!text.isConnected) return;
+			const line = parseFloat(getComputedStyle(text).lineHeight) || 19;
+			if (text.scrollHeight <= line * FOLD_LINES + 2) {
+				text.removeClass("is-folded");
+				return;
+			}
+			const btn = createEl("button", { cls: "st-show-more", text: open ? "Show less" : "Show more" });
+			btn.setAttr("aria-expanded", String(open));
+			text.after(btn);
+			btn.addEventListener("click", () => {
+				const nowOpen = !this.expandedText.has(id);
+				if (nowOpen) this.expandedText.add(id);
+				else this.expandedText.delete(id);
+				text.toggleClass("is-folded", !nowOpen);
+				btn.setText(nowOpen ? "Show less" : "Show more");
+				btn.setAttr("aria-expanded", String(nowOpen));
+				this.queueLayout();
+			});
+			this.queueLayout();
+		});
+	}
+
+	/** The "Reply" field under a comment, shown on the selected card as in Word. */
+	private replyBox(card: HTMLElement, note: SideNote) {
+		const box = card.createDiv("st-reply-box");
+		const input = box.createEl("textarea", { cls: "st-comment-input st-reply-input", attr: { rows: "1", placeholder: "Reply", "aria-label": "Reply" } });
+		const fit = () => {
+			input.setCssStyles({ height: "auto" });
+			input.setCssStyles({ height: input.scrollHeight + "px" });
+			box.toggleClass("has-text", !!input.value.trim());
+		};
+		// Half-written replies survive the margin being redrawn.
+		input.value = this.replyDrafts.get(note.id) ?? "";
+		if (input.value) window.requestAnimationFrame(fit);
+		box.toggleClass("has-text", !!input.value.trim());
+		input.addEventListener("input", () => {
+			this.replyDrafts.set(note.id, input.value);
+			fit();
+			this.queueLayout();
+		});
+		input.addEventListener("focus", () => {
+			if (this.activeNote !== note.id) this.setActiveNote(note.id);
+		});
+		const suggest = new LinkSuggest(this.app, input, box, () => this.file?.path ?? "");
+		const send = () => {
+			const text = input.value.trim();
+			if (!text) return;
+			this.replyDrafts.delete(note.id);
+			this.activeNote = note.id;
+			this.mutate(() => note.replies.push({ id: uid(), text, author: this.plugin.settings.authorName, created: Date.now() }));
+		};
+		const cancel = () => {
+			this.replyDrafts.delete(note.id);
+			input.value = "";
+			fit();
+			input.blur();
+			this.queueLayout();
+		};
+		this.commentButtons(box, "Reply", send, cancel, suggest);
+		this.commentKeys(input, send, cancel);
 	}
 
 	private commentButtons(card: HTMLElement, label: string, ok: () => void, cancel: () => void, suggest?: LinkSuggest) {
@@ -2807,6 +3003,7 @@ export class ComicView extends TextFileView {
 		this.activeNote = id;
 		if (!this.marginEl) return;
 		this.marginEl.querySelectorAll<HTMLElement>(".st-comment[data-note]").forEach((c) => c.toggleClass("is-active", c.dataset.note === id));
+		this.repaintMirrors();
 		this.layoutMargin();
 	}
 
@@ -2835,11 +3032,17 @@ export class ComicView extends TextFileView {
 		const placed = cards
 			.map((card, order) => {
 				const id = card.dataset.anchor!;
-				if (!anchors.has(id)) {
+				const start = card.dataset.start;
+				const key = start === undefined ? id : id + "@" + start;
+				if (!anchors.has(key)) {
 					const el = this.scriptEl.querySelector<HTMLElement>(`.st-sheet [data-id="${id}"]`);
-					anchors.set(id, el ? el.getBoundingClientRect().top - base : 0);
+					// A comment on some of the words sits level with the line those words are on.
+					const ta = start === undefined ? null : el?.querySelector<HTMLTextAreaElement>("textarea.st-text");
+					const mirror = ta ? this.mirrors.get(ta) : undefined;
+					const at = (mirror && this.offsetRect(mirror, Number(start))) || el?.getBoundingClientRect();
+					anchors.set(key, at ? at.top - base : 0);
 				}
-				return { card, order, want: Math.max(0, anchors.get(id)!), top: 0, h: card.offsetHeight };
+				return { card, order, want: Math.max(0, anchors.get(key)!), top: 0, h: card.offsetHeight };
 			})
 			.sort((a, b) => a.want - b.want || a.order - b.order);
 
@@ -2861,7 +3064,8 @@ export class ComicView extends TextFileView {
 		layer.setCssStyles({ height: bottom + "px" });
 
 		this.scriptEl.querySelectorAll(".st-comment-anchor").forEach((el) => el.removeClass("st-comment-anchor"));
-		const active = placed[k]?.card.dataset.anchor;
+		// Word comments light up their words instead (see renderMirror).
+		const active = placed[k]?.card.dataset.start === undefined ? placed[k]?.card.dataset.anchor : undefined;
 		if (active) this.scriptEl.querySelector(`.st-sheet [data-id="${active}"]`)?.addClass("st-comment-anchor");
 	}
 

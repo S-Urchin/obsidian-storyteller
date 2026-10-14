@@ -1,6 +1,6 @@
 {
   "name": "obsidian-storyteller",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Block-based comic script drafter for Obsidian with Word export.",
   "main": "main.js",
   "scripts": {

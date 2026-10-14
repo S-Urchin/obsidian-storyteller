@@ -25,6 +25,7 @@
 	--st-hl-orange: rgba(255, 149, 0, 0.26);
 	--st-comment-tint: rgba(251, 188, 4, 0.12);
 	--st-comment-active: rgba(251, 188, 4, 0.34);
+	--st-comment-line: rgba(227, 160, 0, 0.9);
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
@@ -85,6 +86,7 @@
 	--st-hl-orange: rgba(252, 173, 112, 0.26);
 	--st-comment-tint: rgba(253, 214, 99, 0.09);
 	--st-comment-active: rgba(253, 214, 99, 0.24);
+	--st-comment-line: rgba(253, 214, 99, 0.75);
 	color-scheme: dark;
 }
 
@@ -670,6 +672,43 @@
 .st-root .st-comment textarea.st-comment-input:focus { border-color: var(--st-accent); outline: none; }
 .st-comment-buttons { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
 .st-root .st-comment-buttons button { font-size: 12px; height: auto; padding: 4px 12px; border-radius: 14px; }
+/* long comments fold to a few lines (FOLD_LINES in view.ts) behind "Show more" */
+.st-comment-text.is-folded {
+	max-height: calc(1.45em * 4);
+	overflow: hidden;
+	-webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent);
+	mask-image: linear-gradient(to bottom, #000 55%, transparent);
+}
+.st-root .st-comment button.st-show-more {
+	display: block;
+	margin-top: 2px;
+	padding: 0;
+	height: auto;
+	background: none;
+	border: none;
+	box-shadow: none;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--st-accent);
+	cursor: pointer;
+}
+.st-root .st-comment button.st-show-more:hover { text-decoration: underline; }
+/* replies under a comment, and the Reply field (on the selected card only, as in Word) */
+.st-comment-thread { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+.st-reply { padding-left: 10px; border-left: 2px solid var(--st-card-border); }
+.st-reply .st-comment-text { margin-top: 4px; }
+.st-avatar.st-avatar-small { width: 22px; height: 22px; font-size: 11px; }
+.st-root .st-comment button.st-reply-delete { opacity: 0; }
+.st-root .st-reply:hover button.st-reply-delete,
+.st-root .st-comment button.st-reply-delete:focus-visible { opacity: 1; }
+.st-reply-box { margin-top: 10px; }
+.st-comment:not(.is-active) .st-reply-box:not(.has-text) { display: none; }
+.st-root .st-comment textarea.st-reply-input,
+.st-root .st-comment textarea.st-reply-input:hover,
+.st-root .st-comment textarea.st-reply-input:focus { margin-top: 0; resize: none; overflow: hidden; }
+.st-reply-box .st-comment-buttons { display: none; }
+.st-reply-box:focus-within .st-comment-buttons,
+.st-reply-box.has-text .st-comment-buttons { display: flex; }
 
 .st-comment-marker {
 	position: absolute;
@@ -860,6 +899,9 @@
 .st-mark-blue { background: var(--st-hl-blue); }
 .st-mark-pink { background: var(--st-hl-pink); }
 .st-mark-orange { background: var(--st-hl-orange); }
+/* words with a comment on them, as in Word: a tint and a line under just those words */
+.st-cmt { background: var(--st-comment-tint); box-shadow: inset 0 -2px 0 var(--st-comment-line); }
+.st-cmt.is-active { background: var(--st-comment-active); }
 
 /* the bar that pops up over a text selection */
 .st-root { position: relative; }
@@ -892,6 +934,7 @@
 .st-root button.st-format-btn:hover { background: var(--background-modifier-hover); }
 .st-root button.st-format-btn.is-active { background: rgba(66, 133, 244, 0.18); color: var(--interactive-accent); }
 .st-format-btn svg { width: 16px; height: 16px; }
+.st-format-sep { width: 1px; margin: 6px 2px; background: var(--background-modifier-border); }
 .st-root button.st-format-btn-highlight.is-active { box-shadow: inset 0 -3px 0 var(--st-active-highlight, var(--st-hl-yellow)); }
 
 /* colour picker that drops down from the highlighter button */

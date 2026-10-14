@@ -19,7 +19,7 @@ Scripts are `.comic` files with their own editor. The editor and the export foll
 **Organising**
 - **Pages list.** Jump to any page, drag to reorder, or collapse it to a rail of numbers. A line shows exactly where a dragged page will land.
 - **Swap or move pages** from a picker, without dragging.
-- **Comments** in a Google Docs-style margin, with `[[links]]` to your notes.
+- **Comments** in a Google Docs-style margin, with `[[links]]` to your notes. Select some words and press Ctrl+Alt+M (or the comment button on the formatting bar) to comment on just those words, as in Word, and reply to comments in a thread.
 - **Mark for revision, pin, highlight and lock** any page, panel or block (right-click).
 - **Undo** for every change, including deletes.
 

@@ -14,9 +14,9 @@ import {
 	TextRun,
 	UnderlineType,
 } from "docx";
-import { linksToText, parseInline } from "./format";
+import { cutSegments, linksToText } from "./format";
 import { balloonNumbers, findType, freeFormat, pageLabel, panelLabel } from "./doc";
-import { Block, ComicDoc, HighlightColor, ItemMeta, StorytellerSettings } from "./types";
+import { Block, ComicDoc, HighlightColor, ItemMeta, SideNote, StorytellerSettings } from "./types";
 
 /*
  * Layout follows Greg Pak's comic script template:
@@ -60,10 +60,49 @@ export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): 
 			highlight: hl(style.highlight),
 		});
 
-	/** Turns ***bold italic***, **bold**, *italic*, __underline__ and ==highlight== (and line breaks) into runs. */
-	const inlineRuns = (text: string, base: RunStyle = {}): TextRun[] => {
-		const runs: TextRun[] = [];
-		for (const seg of parseInline(text)) {
+	/** Adds a note to the file's comment list and returns its id. Replies follow the comment, each under its author's name. */
+	const addComment = (note: SideNote): number => {
+		const id = comments.length;
+		const author = note.author || settings.authorName;
+		const lines = (text: string) => linksToText(text).split("\n").map((line) => new Paragraph({ children: [new TextRun(line)] }));
+		comments.push({
+			id,
+			author,
+			initials: author.slice(0, 2).toUpperCase(),
+			date: new Date(note.created),
+			children: [
+				...lines(note.text),
+				...note.replies.flatMap((r) => [
+					new Paragraph({ spacing: { before: 120 }, children: [new TextRun({ text: (r.author || settings.authorName) + ":", bold: true })] }),
+					...lines(r.text),
+				]),
+			],
+		});
+		return id;
+	};
+
+	/** Unresolved comments on some of a block's words, which wrap just those words in Word. */
+	const wordNotes = (item: ItemMeta): SideNote[] => (settings.exportComments ? item.notes.filter((n) => n.range && !n.resolved) : []);
+
+	/**
+	 * Turns ***bold italic***, **bold**, *italic*, __underline__ and ==highlight== (and line breaks) into runs,
+	 * with Word comments around the words they were made on.
+	 */
+	const inlineRuns = (text: string, base: RunStyle = {}, notes: SideNote[] = []): ParagraphChild[] => {
+		const out: ParagraphChild[] = [];
+		const clamp = (n: number) => Math.min(n, text.length);
+		const marks = notes.map((n) => ({ id: addComment(n), start: clamp(n.range!.start), end: clamp(n.range!.end) }));
+		const done = new Set<number>();
+		const at = (pos: number) => {
+			if (done.has(pos)) return;
+			done.add(pos);
+			const close = (m: (typeof marks)[number]) => out.push(new CommentRangeEnd(m.id), new TextRun({ children: [new CommentReference(m.id)] }));
+			for (const m of marks) if (m.end === pos && m.start < pos) close(m);
+			for (const m of marks) if (m.start === pos) out.push(new CommentRangeStart(m.id));
+			for (const m of marks) if (m.start === pos && m.end === pos) close(m);
+		};
+		for (const { seg, from } of cutSegments(text, marks)) {
+			at(from);
 			if (seg.marker) continue;
 			const style: RunStyle = {
 				size: base.size,
@@ -73,14 +112,15 @@ export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): 
 				highlight: seg.highlight,
 			};
 			seg.text.split("\n").forEach((line, i) => {
-				if (i > 0) runs.push(new TextRun({ break: 1, size: base.size ?? SIZE }));
-				if (line) runs.push(run(line, style));
+				if (i > 0) out.push(new TextRun({ break: 1, size: base.size ?? SIZE }));
+				if (line) out.push(run(line, style));
 			});
 		}
-		return runs;
+		at(text.length);
+		return out;
 	};
 
-	/** Adds a red [REVISE] marker and wraps the runs in a Word comment per unresolved note. */
+	/** Adds a red [REVISE] marker and wraps the runs in a Word comment per unresolved note on the whole item. */
 	const decorate = (item: ItemMeta, runs: ParagraphChild[]): ParagraphChild[] => {
 		let out = runs;
 		if (settings.exportRevisionMarks && item.revision) {
@@ -88,16 +128,8 @@ export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): 
 		}
 		if (!settings.exportComments) return out;
 		for (const note of item.notes) {
-			if (note.resolved) continue;
-			const id = comments.length;
-			const author = note.author || settings.authorName;
-			comments.push({
-				id,
-				author,
-				initials: author.slice(0, 2).toUpperCase(),
-				date: new Date(note.created),
-				children: linksToText(note.text).split("\n").map((line) => new Paragraph({ children: [new TextRun(line)] })),
-			});
+			if (note.resolved || note.range) continue;
+			const id = addComment(note);
 			out = [new CommentRangeStart(id), ...out, new CommentRangeEnd(id), new TextRun({ children: [new CommentReference(id)] })];
 		}
 		return out;
@@ -116,7 +148,7 @@ export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): 
 			children: decorate(block, [
 				run(label),
 				new TextRun({ children: [new Tab()], size: SIZE }),
-				...inlineRuns(block.text),
+				...inlineRuns(block.text, {}, wordNotes(block)),
 			]),
 		});
 	};
@@ -131,7 +163,7 @@ export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): 
 			alignment: f.align === "center" ? AlignmentType.CENTER : f.align === "right" ? AlignmentType.RIGHT : AlignmentType.LEFT,
 			indent: f.indent ? { left: TWO_INCHES } : undefined,
 			border: f.box ? { top: edge, bottom: edge, left: edge, right: edge } : undefined,
-			children: decorate(block, inlineRuns(block.text, { size })),
+			children: decorate(block, inlineRuns(block.text, { size }, wordNotes(block))),
 		});
 	};
 
@@ -150,7 +182,7 @@ export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): 
 			// The first description runs on after "Panel N:", as in the template.
 			const first = blocks[0] && findType(settings, blocks[0].typeId).style === "description" ? blocks.shift()! : null;
 			if (first) {
-				body.push(action(decorate(panel, [label, ...decorate(first, inlineRuns(first.text))])));
+				body.push(action(decorate(panel, [label, ...decorate(first, inlineRuns(first.text, {}, wordNotes(first)))])));
 			} else {
 				body.push(action(decorate(panel, [label])));
 			}
@@ -160,7 +192,7 @@ export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): 
 				else if (style === "freestyle") {
 					if (block.text.trim() || block.notes.length || block.revision) body.push(freestyle(block));
 				} else if (block.text.trim() || block.notes.length || block.revision) {
-					body.push(action(decorate(block, inlineRuns(block.text))));
+					body.push(action(decorate(block, inlineRuns(block.text, {}, wordNotes(block)))));
 				}
 			}
 		});

@@ -3,12 +3,30 @@ export type HighlightColor = "yellow" | "green" | "blue" | "pink" | "orange";
 
 export const HIGHLIGHT_COLORS: HighlightColor[] = ["yellow", "green", "blue", "pink", "orange"];
 
+/** The characters of a block's text a comment is attached to, like a Word comment on selected words. */
+export interface NoteRange {
+	/** Offsets into the block's raw text (markers included); start === end once the words are deleted. */
+	start: number;
+	end: number;
+}
+
+/** An answer in a comment's thread. */
+export interface NoteReply {
+	id: string;
+	text: string;
+	author: string;
+	created: number;
+}
+
 export interface SideNote {
 	id: string;
 	text: string;
 	author: string;
 	created: number;
 	resolved: boolean;
+	replies: NoteReply[];
+	/** Blocks only: set when the comment is on some of the words rather than the whole item. */
+	range?: NoteRange;
 }
 
 /** State shared by pages, panels and blocks. */

@@ -179,6 +179,7 @@ export class HelpModal extends Modal {
 			["Name the speaker", "In a dialogue block, type the character's name, with an optional modifier in brackets, for example MAYA (off). Names you've used before autocomplete. Balloon numbers and page and panel numbers fill themselves in."],
 			["Rearrange", "Hover over anything and drag its ⠿ grip to move it, even into another page. Numbers update automatically. Ctrl+Z undoes any change."],
 			["Right-click for more", "Right-click a page, panel or block to comment on it, pin it, lock it, mark it for revision, duplicate it or delete it."],
+			["Comment on words", "Select some words and click the comment button on the formatting bar (or press Ctrl+Alt+M). The comment sits beside just those words, as in Word, and follows them as you edit. Click a comment to reply to it."],
 			["Format text", "Select some text and use the small bar that appears, or press Ctrl+B, Ctrl+I, Ctrl+U or Ctrl+Shift+H. The highlighter button opens a colour picker, just like Word's — only the selected words get coloured, not the whole block."],
 			["Review", "Click Read in the top-left (or press Ctrl+E) to see the clean script as it will print. Double-click any line to go back and edit it."],
 			["Export", "Click Export .docx. The Word file is saved in the “Exported” folder of your vault, ready for final edits in Word."],
@@ -223,6 +224,7 @@ export class HelpModal extends Modal {
 					["Ctrl+B then Ctrl+I", "***Bold italic*** (the template's emphasis)"],
 					["Ctrl+U", "__Underline__"],
 					["Ctrl+Shift+H", "==Highlight== the selected words (yellow); click the toolbar button for other colours"],
+					["Ctrl+Alt+M", "Comment on the selected words"],
 				],
 			],
 			[

@@ -67,11 +67,37 @@ export function parseInline(text: string): Segment[] {
 	return out;
 }
 
-/** Renders text as styled spans (markers included, faded) for the editor's live preview. */
-export function renderInline(parent: HTMLElement, text: string) {
-	parent.empty();
+/** Words with a comment on them, as offsets into the raw text. */
+export interface CommentSpan {
+	start: number;
+	end: number;
+	active?: boolean;
+}
+
+/** Splits the text into segments with their offsets, cut wherever a comment starts or ends. */
+export function cutSegments(text: string, spans: CommentSpan[]): { seg: Segment; from: number; to: number }[] {
+	const out: { seg: Segment; from: number; to: number }[] = [];
+	let pos = 0;
 	for (const seg of parseInline(text)) {
-		if (!seg.marker && !seg.bold && !seg.italic && !seg.underline && !seg.highlight) {
+		const end = pos + seg.text.length;
+		const cuts = [pos, end];
+		for (const s of spans) for (const c of [s.start, s.end]) if (c > pos && c < end) cuts.push(c);
+		cuts.sort((a, b) => a - b);
+		for (let i = 0; i < cuts.length - 1; i++) {
+			if (cuts[i] === cuts[i + 1]) continue;
+			out.push({ seg: { ...seg, text: text.slice(cuts[i], cuts[i + 1]) }, from: cuts[i], to: cuts[i + 1] });
+		}
+		pos = end;
+	}
+	return out;
+}
+
+/** Renders text as styled spans (markers included, faded) for the editor's live preview. */
+export function renderInline(parent: HTMLElement, text: string, comments: CommentSpan[] = []) {
+	parent.empty();
+	for (const { seg, from, to } of cutSegments(text, comments)) {
+		const on = comments.filter((c) => c.start < c.end && c.start <= from && c.end >= to);
+		if (!seg.marker && !seg.bold && !seg.italic && !seg.underline && !seg.highlight && !on.length) {
 			parent.appendText(seg.text);
 			continue;
 		}
@@ -81,6 +107,8 @@ export function renderInline(parent: HTMLElement, text: string) {
 		if (seg.italic) span.addClass("st-i");
 		if (seg.underline) span.addClass("st-u");
 		if (seg.highlight) span.addClass("st-mark", "st-mark-" + seg.highlight);
+		if (on.length) span.addClass("st-cmt");
+		if (on.some((c) => c.active)) span.addClass("is-active");
 	}
 	// A trailing newline needs content after it, or the preview is a line short of the text box.
 	if (text.endsWith("\n") || !text) parent.appendText("​");
