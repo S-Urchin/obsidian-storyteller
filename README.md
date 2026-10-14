@@ -1,4 +1,4 @@
-# Storyteller: Comic Drafter
+# Storyteller Comic Drafter
 
 Write comic scripts in Obsidian with drag-and-drop pages, panels and lettering blocks, keep a series of issues in order, and export each script to an editable Word file.
 
@@ -120,7 +120,7 @@ Project folders are set per project, from the ⚙ button in the Projects tab.
 
 ## Install
 
-**From a release:** download `main.js`, `manifest.json` and `styles.css` from the [latest release](https://github.com/S-Urchin/obsidian-storyteller/releases/latest) into `<vault>/.obsidian/plugins/storyteller-comic-drafter/`, then enable *Storyteller: Comic Drafter* under *Settings → Community plugins*.
+**From a release:** download `main.js`, `manifest.json` and `styles.css` from the [latest release](https://github.com/S-Urchin/obsidian-storyteller/releases/latest) into `<vault>/.obsidian/plugins/storyteller-comic-drafter/`, then enable *Storyteller Comic Drafter* under *Settings → Community plugins*.
 
 **From source:**
 
