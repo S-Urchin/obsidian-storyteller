@@ -1,4 +1,4 @@
-import { Menu, MenuItem, Modifier, Notice, Scope, TextFileView, WorkspaceLeaf, setIcon } from "obsidian";
+import { Menu, MenuItem, Modifier, Notice, Scope, TextFileView, TFile, WorkspaceLeaf, setIcon } from "obsidian";
 import type StorytellerPlugin from "./main";
 import {
 	balloonNumbers,
@@ -18,19 +18,21 @@ import {
 	pageLabel,
 	panelLabel,
 	panelLetteringWords,
+	presetFromBlock,
 	uid,
 	walk,
 	wordCount,
 } from "./doc";
 import { MAX_PALETTE, MIN_PALETTE, VIEW_TYPE_COMIC, WIDE_PALETTE } from "./defaults";
-import { BlockTypeModal, ConfirmModal, HelpModal, HelpTab, PageChoice, PagePickerModal, PromptModal } from "./modals";
+import { BlockTypeModal, chooseVaultImage, ConfirmModal, HelpModal, HelpTab, ImageViewModal, PageChoice, PagePickerModal, PromptModal } from "./modals";
+import { docHasImages, fileName, imageType, pathMatches, renameDocImages } from "./images";
 import { cutSegments, parseInline, rawToPlain, toRich } from "./format";
 import { CommentSpan, RichEditor, StyleKey } from "./rich-editor";
 import { LinkSuggest, renderLinked } from "./links";
 import { exportFolderLabel, isSystemPath, shortPath } from "./locations";
 import { animateRender, capturePositions, motionAllowed, playOnce } from "./motion";
 import { ensureSections, isStarred, moveToSection, newSection, presetKey, starredItems, toggleStar, typeKey } from "./palette";
-import { Block, BlockPreset, BlockType, ComicDoc, FreeFormat, HighlightColor, HIGHLIGHT_COLORS, ItemKind, ItemRef, NoteRange, NoteReply, Page, PaletteSection, Panel, PaperMode, SideNote } from "./types";
+import { Block, BlockImage, BlockPreset, BlockType, ComicDoc, FreeFormat, HighlightColor, HIGHLIGHT_COLORS, ItemKind, ItemRef, NoteRange, NoteReply, Page, PaletteSection, Panel, PaperMode, SideNote } from "./types";
 
 type DragPayload =
 	| { kind: "page" | "panel" | "block"; id: string }
@@ -109,6 +111,8 @@ export class ComicView extends TextFileView {
 	private paletteWide = false;
 	/** Read mode: the finished script, laid out like the Word export, with no editing chrome. */
 	private readMode = false;
+	/** Column left of the paper with each block's image thumbnail (like the comment margin on the right). */
+	private imageColEl: HTMLElement | null = null;
 
 	// Text editors (one per block), and the formatting bar that appears over a selection.
 	private editors = new Set<RichEditor>();
@@ -299,6 +303,15 @@ export class ComicView extends TextFileView {
 		this.registerDomEvent(window, "dragend", () => this.endDrag());
 		// Obsidian's light/dark switch: Auto paper recolours via CSS; keep the sun/moon icon in step.
 		this.registerEvent(this.app.workspace.on("css-change", () => this.updatePaperIcon()));
+		// A referenced image was added, changed or deleted in the vault: redraw its thumbnail.
+		const refreshImages = (file: { path: string }) => {
+			if (!this.readMode && [...walk(this.doc)].some((ref) => ref.block?.image && pathMatches(ref.block.image.path, file.path))) {
+				this.refreshScript();
+			}
+		};
+		this.registerEvent(this.app.vault.on("create", refreshImages));
+		this.registerEvent(this.app.vault.on("delete", refreshImages));
+		this.registerEvent(this.app.vault.on("modify", refreshImages));
 		// Over the toolbar or other dead areas: hide the insertion line so it never promises a drop that won't happen.
 		this.contentEl.addEventListener("dragover", (e) => {
 			if (this.drag && !(e.target as HTMLElement).closest(".st-script, .st-palette, .st-nav")) this.clearDropHint();
@@ -341,6 +354,25 @@ export class ComicView extends TextFileView {
 		fn();
 		this.requestSave();
 		if (render) this.renderAll();
+	}
+
+	async renameImages(oldPath: string, newPath: string): Promise<void> {
+		if (this.loadError !== null) return;
+		// Attachment renames are external changes: update history too, so undo cannot restore stale paths.
+		const renameSnapshot = (snapshot: string) => {
+			if (!snapshot.includes(JSON.stringify(oldPath).slice(1, -1))) return snapshot;
+			const doc = normalizeDoc(JSON.parse(snapshot), this.doc.title);
+			renameDocImages(doc, oldPath, newPath);
+			return JSON.stringify(doc);
+		};
+		this.undoStack = this.undoStack.map(renameSnapshot);
+		this.redoStack = this.redoStack.map(renameSnapshot);
+		if (this.pendingSnapshot) this.pendingSnapshot = renameSnapshot(this.pendingSnapshot);
+		if (renameDocImages(this.doc, oldPath, newPath)) {
+			this.requestSave();
+			this.renderAll();
+			await this.save();
+		}
 	}
 
 	private get motion(): boolean {
@@ -829,6 +861,7 @@ export class ComicView extends TextFileView {
 		root.empty();
 		this.panelCountEls.clear();
 		this.marginEl = null;
+		this.imageColEl = null;
 		this.sheetObserver?.disconnect();
 		this.applyAppearance();
 
@@ -911,6 +944,7 @@ export class ComicView extends TextFileView {
 		this.sideEl.empty();
 		this.panelCountEls.clear();
 		this.marginEl = null;
+		this.imageColEl = null;
 		this.sheetObserver?.disconnect();
 		this.destroyEditors();
 		this.applyAppearance();
@@ -1599,14 +1633,7 @@ export class ComicView extends TextFileView {
 			if (!ref?.block) return;
 			const b = ref.block;
 			const type = findType(settings, b.typeId);
-			const preset: BlockPreset = {
-				id: uid(),
-				name: ((b.speaker || type.name) + ": " + b.text).slice(0, 32),
-				typeId: b.typeId,
-				speaker: b.speaker,
-				modifier: b.modifier,
-				text: b.text,
-			};
+			const preset = presetFromBlock(b, ((b.speaker || type.name) + ": " + b.text).slice(0, 32));
 			settings.presets.push(preset);
 			sec.items.splice(at, 0, presetKey(preset.id));
 			new Notice(`Saved “${preset.name}” to ${sec.name}.`);
@@ -1651,6 +1678,8 @@ export class ComicView extends TextFileView {
 	private renderScript() {
 		this.quickAddDrawn = this.quickAddSignature();
 		const canvas = this.scriptEl.createDiv("st-canvas");
+		// Thumbnails go left of the paper, mirroring comments on the right; only when there are any.
+		this.imageColEl = docHasImages(this.doc) ? canvas.createDiv({ cls: "st-image-col", attr: { role: "complementary", "aria-label": "Block images" } }) : null;
 		const paper = canvas.createDiv("st-sheet");
 
 		const title = paper.createEl("input", { cls: "st-title", attr: { type: "text", placeholder: "Title of book #1", spellcheck: "false" } });
@@ -1668,6 +1697,7 @@ export class ComicView extends TextFileView {
 		const add = paper.createEl("button", { cls: "st-add-btn st-plus", text: "Add page" });
 		add.addEventListener("click", () => this.addPage());
 
+		this.renderImageCol();
 		this.renderMargin(canvas);
 		this.sheetObserver = new ResizeObserver(() => this.queueLayout());
 		this.sheetObserver.observe(paper);
@@ -1775,6 +1805,10 @@ export class ComicView extends TextFileView {
 		el.setAttr("data-tooltip-position", "left");
 
 		const gutter = el.createDiv("st-gutter st-block-gutter");
+		if (!locked && !block.image) {
+			// One image per block: the button goes once there's a thumbnail (which has its own controls).
+			this.iconBtn(gutter, "image-plus", "Add an image to this block", () => this.chooseBlockImage(block.id), "st-add-image");
+		}
 		// A description carrying "Panel N:" is the panel's heading line: only the panel's grip
 		// belongs there, or grabbing the nearer one moves the text and leaves the label behind.
 		if (!panelLabelEl) this.dragHandle(gutter, el, ref, locked);
@@ -1904,6 +1938,108 @@ export class ComicView extends TextFileView {
 			e.preventDefault();
 			editor.focusAt(e.clientX, e.clientY);
 		});
+	}
+
+	// ---------------------------------------------------------------- block images
+
+	/** Picks a vault image for a block. A block has at most one; picking again replaces it. */
+	private chooseBlockImage(blockId: string) {
+		chooseVaultImage(this.app, (file) => {
+			const ref = findRef(this.doc, blockId);
+			if (!ref?.block || isLocked(ref)) {
+				new Notice("That block was removed or locked. No image was added.");
+				return;
+			}
+			this.mutate(() => (ref.block!.image = { path: file.path, alt: "", hidden: false }));
+		});
+	}
+
+	/** Thumbnails for every visible block with an image, placed level with their block by layoutImageCol. */
+	private renderImageCol() {
+		const col = this.imageColEl;
+		if (!col) return;
+		const layer = col.createDiv("st-image-layer");
+		for (const ref of walk(this.doc)) {
+			if (ref.kind !== "block" || !ref.block?.image) continue;
+			// Hidden with its page or panel: nothing to line up with.
+			if (ref.page.collapsed || ref.panel?.collapsed) continue;
+			this.renderImageCard(layer, ref, ref.block.image);
+		}
+	}
+
+	private renderImageCard(layer: HTMLElement, ref: ItemRef, image: BlockImage) {
+		const block = ref.block!;
+		const locked = isLocked(ref);
+		const name = fileName(image.path);
+		const card = layer.createDiv({ cls: "st-image-card", attr: { "data-anchor": block.id } });
+		card.toggleClass("is-hidden", image.hidden);
+		// Pointing at a thumbnail shows which line it belongs to.
+		const line = () => this.scriptEl.querySelector<HTMLElement>(`.st-sheet [data-id="${block.id}"]`);
+		card.addEventListener("mouseenter", () => line()?.addClass("st-image-anchor"));
+		card.addEventListener("mouseleave", () => line()?.removeClass("st-image-anchor"));
+
+		const file = this.app.vault.getAbstractFileByPath(image.path);
+		const src = file instanceof TFile && imageType(file.extension) ? this.app.vault.getResourcePath(file) : null;
+		const alt = image.alt || name;
+		const enlarge = () => {
+			if (src) new ImageViewModal(this.app, src, `${describeRef(ref, this.plugin.settings)} · ${name}`, alt, "").open();
+		};
+
+		if (!src) {
+			card.addClass("is-missing");
+			card.createDiv({ cls: "st-image-missing", text: `Missing: ${image.path}` });
+		} else if (image.hidden) {
+			const chip = card.createDiv({ cls: "st-image-chip", attr: { "aria-label": `${name} (hidden)` } });
+			setIcon(chip.createSpan(), "image");
+		} else {
+			const thumb = card.createDiv({ cls: "st-image-thumb", attr: { role: "button", tabindex: "0", "aria-label": `${name} · click to enlarge` } });
+			const img = thumb.createEl("img", { attr: { src, alt, loading: "lazy", draggable: "false" } });
+			img.addEventListener("load", () => this.queueLayout());
+			img.addEventListener("error", () => {
+				thumb.empty();
+				card.addClass("is-missing");
+				thumb.createDiv({ cls: "st-image-missing", text: `Couldn't load ${name}` });
+				this.queueLayout();
+			}, { once: true });
+			thumb.addEventListener("click", enlarge);
+			thumb.addEventListener("keydown", (e) => {
+				if (e.key !== "Enter" && e.key !== " ") return;
+				e.preventDefault();
+				enlarge();
+			});
+		}
+
+		const tools = card.createDiv("st-image-tools");
+		if (src) this.iconBtn(tools, "maximize-2", "Enlarge", enlarge, "st-image-enlarge");
+		if (!locked) {
+			if (src) {
+				this.iconBtn(tools, image.hidden ? "eye" : "eye-off", image.hidden ? "Show image" : "Hide image", () =>
+					this.mutate(() => {
+						if (block.image) block.image.hidden = !block.image.hidden;
+					}), "st-image-hide");
+			}
+			this.iconBtn(tools, "trash-2", "Remove image (the file stays in your vault)", () => {
+				this.mutate(() => delete block.image);
+				this.undoNotice(`Removed ${name} from the block.`);
+			}, "st-image-remove");
+		}
+	}
+
+	/** Places each thumbnail level with its block, pushed down so none overlap (like the comment margin). */
+	private layoutImageCol() {
+		const col = this.imageColEl;
+		if (!col?.isConnected || !this.scriptEl) return;
+		const layer = col.querySelector<HTMLElement>(".st-image-layer");
+		if (!layer) return;
+		const base = layer.getBoundingClientRect().top;
+		let y = 0;
+		for (const card of Array.from(layer.querySelectorAll<HTMLElement>(".st-image-card"))) {
+			const el = this.scriptEl.querySelector<HTMLElement>(`.st-sheet [data-id="${card.dataset.anchor}"]`);
+			const top = Math.max(el ? el.getBoundingClientRect().top - base : y, y);
+			card.setCssStyles({ top: top + "px" });
+			y = top + card.offsetHeight + CARD_GAP;
+		}
+		layer.setCssStyles({ height: y + "px" });
 	}
 
 	/** Turns a block's drawn text into its editor (once), or returns the editor it already is. */
@@ -2749,7 +2885,7 @@ export class ComicView extends TextFileView {
 		const type = findType(this.plugin.settings, block.typeId);
 		const suggested = (block.speaker ? block.speaker + ": " : type.name + ": ") + block.text.slice(0, 24);
 		new PromptModal(this.app, "Save as reusable block", suggested, (name) => {
-			this.plugin.settings.presets.push({ id: uid(), name, typeId: block.typeId, speaker: block.speaker, modifier: block.modifier, text: block.text });
+			this.plugin.settings.presets.push(presetFromBlock(block, name));
 			void this.plugin.saveSettings({ from: this, scope: "palette" });
 			new Notice(`Saved “${name}” to the palette.`);
 		}).open();
@@ -3094,6 +3230,7 @@ export class ComicView extends TextFileView {
 	 * move up to make room, as in Google Docs.
 	 */
 	private layoutMargin() {
+		this.layoutImageCol();
 		const margin = this.marginEl;
 		if (!margin || !this.scriptEl) return;
 		const layer = margin.querySelector<HTMLElement>(".st-margin-layer");

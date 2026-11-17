@@ -33,6 +33,7 @@
 }
 .view-content.st-root { padding: 0; }
 
+
 /* Paper colours. "Auto" follows Obsidian's light/dark theme live; Light and Dark are fixed. */
 .st-root {
 	--st-accent: #1a73e8;
@@ -1709,3 +1710,66 @@
 .st-stat-table tfoot td { font-weight: var(--font-semibold); border-bottom: none; }
 
 .st-project-modal .setting-item-control input[type="text"] { width: 100%; min-width: 200px; }
+
+/* ===================================================================
+   Block images: one per block, as thumbnails in a column left of the paper
+   (mirroring the comment margin on the right), never on the page itself.
+   =================================================================== */
+/* the add-image button sits in the block's left gutter, beside the drag handle */
+.st-root button.st-add-image { opacity: 0; padding: 0 1px; height: auto; color: var(--st-sheet-muted); }
+.st-root button.st-add-image svg { width: 15px; height: 15px; }
+.st-item:hover > .st-gutter button.st-add-image,
+.st-item:focus-within > .st-gutter button.st-add-image { opacity: 0.55; }
+.st-root .st-item > .st-gutter button.st-add-image:hover,
+.st-root .st-item > .st-gutter button.st-add-image:focus-visible { opacity: 1; }
+
+.st-image-col {
+	position: relative;
+	flex: 0 0 120px;
+	align-self: stretch;
+	font-family: var(--font-interface);
+	font-size: 12px;
+}
+.st-root.st-paper-dark .st-image-col,
+.theme-dark .st-root.st-paper-auto .st-image-col { margin-right: 16px; }
+.st-image-layer { position: relative; }
+.st-image-card {
+	position: absolute;
+	left: 0;
+	right: 0;
+	padding: 4px;
+	background: var(--st-card-bg);
+	color: var(--st-card-fg);
+	border: 1px solid var(--st-card-border);
+	border-radius: 6px;
+	box-shadow: 0 1px 2px var(--st-shadow);
+	transition: top 160ms var(--st-ease);
+}
+.st-image-thumb { border-radius: 4px; overflow: hidden; cursor: zoom-in; }
+.st-image-thumb:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
+.st-image-thumb img { display: block; width: 100%; max-height: 140px; object-fit: contain; }
+.st-image-tools { display: flex; justify-content: flex-end; gap: 0; margin-top: 2px; opacity: 0.45; transition: opacity 120ms; }
+.st-image-card:hover .st-image-tools,
+.st-image-card:focus-within .st-image-tools { opacity: 1; }
+.st-root .st-image-tools button.st-icon-btn { padding: 2px 3px; height: auto; }
+.st-image-tools svg { width: 14px; height: 14px; }
+/* hidden: just a small chip with its buttons */
+.st-image-card.is-hidden { display: flex; align-items: center; padding: 2px 4px; }
+.st-image-card.is-hidden .st-image-tools { margin-top: 0; margin-left: auto; }
+.st-image-chip { display: inline-flex; align-items: center; color: var(--st-sheet-muted); }
+.st-image-chip svg { width: 14px; height: 14px; }
+.st-image-missing { color: var(--text-error); font-size: 11px; line-height: 1.3; overflow-wrap: anywhere; padding: 2px; }
+.st-image-card.is-missing { border-style: dashed; }
+/* the line a hovered thumbnail belongs to */
+.st-root .st-sheet .st-item.st-image-anchor { background: var(--st-comment-tint); border-radius: 2px; }
+
+/* full-size view */
+.st-image-modal { width: auto; max-width: 92vw; }
+.st-image-full { display: block; max-width: 100%; max-height: 72vh; margin: 0 auto; cursor: zoom-out; }
+.st-image-full-note { margin-top: 10px; }
+.st-image-full-alt { margin-top: 6px; color: var(--text-muted); font-size: var(--font-ui-small); }
+
+/* narrow panes: a slimmer image column */
+@container (max-width: 900px) {
+	.st-image-col { flex-basis: 84px; }
+}

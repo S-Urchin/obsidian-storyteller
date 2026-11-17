@@ -3,7 +3,8 @@ import { DEFAULT_SETTINGS, EXPORT_FOLDER, FILE_EXTENSION, SETTINGS_SCHEMA, VIEW_
 import { newDoc, normalizeDoc } from "./doc";
 import { ensureSections, typeKey } from "./palette";
 import { HOVER_SOURCE } from "./links";
-import { exportDocx } from "./export-docx";
+import { ExportImage, exportDocx } from "./export-docx";
+import { imageType, renameDocImages } from "./images";
 import {
 	ensureVaultFolder,
 	exportFolderLabel,
@@ -22,6 +23,7 @@ import { ComicView } from "./view";
 
 export default class StorytellerPlugin extends Plugin {
 	settings: StorytellerSettings;
+	private imageRenames: Promise<void> = Promise.resolve();
 
 	async onload() {
 		await this.loadSettings();
@@ -120,6 +122,12 @@ export default class StorytellerPlugin extends Plugin {
 		this.registerEvent(
 			this.app.vault.on("rename", (file, oldPath) => {
 				if (renamePath(this.settings.projects, oldPath, file.path)) void this.saveProjects();
+				if (!(file instanceof TFolder) && !imageType(oldPath.split(".").pop() ?? "") && !(file instanceof TFile && imageType(file.extension))) return;
+				const newPath = file.path;
+				this.imageRenames = this.imageRenames.then(() => this.renameImages(oldPath, newPath)).catch((error: unknown) => {
+					console.error("Storyteller image reference update failed", error);
+					new Notice(`Couldn't update image references: ${error instanceof Error ? error.message : String(error)}`);
+				});
 			})
 		);
 		this.registerEvent(
@@ -141,7 +149,7 @@ export default class StorytellerPlugin extends Plugin {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
 		// Never share the default arrays with the live settings object.
 		this.settings.blockTypes = (saved.blockTypes ?? DEFAULT_SETTINGS.blockTypes).map((t) => ({ ...t }));
-		this.settings.presets = [...(saved.presets ?? [])];
+		this.settings.presets = (saved.presets ?? []).map((preset) => ({ ...preset }));
 		this.settings.newPanelBlocks = [...(saved.newPanelBlocks ?? DEFAULT_SETTINGS.newPanelBlocks)];
 		this.settings.paletteSections = (saved.paletteSections ?? []).map((s) => ({ ...s, items: [...(s.items ?? [])] }));
 		this.settings.scriptFolders = [...(saved.scriptFolders ?? [])];
@@ -169,9 +177,71 @@ export default class StorytellerPlugin extends Plugin {
 		}
 		// v6: exported files open automatically by default (was opt-in).
 		if ((saved.schema ?? 1) < 6) this.settings.openAfterExport = true;
+		// v9 put images in the script as "Image" blocks; v10 attaches them to any block and shows them
+		// beside the paper, so the Image block type and saved image blocks go.
+		if ((saved.schema ?? 1) < 10) {
+			this.settings.blockTypes = this.settings.blockTypes.filter((t) => t.id !== "image");
+			this.settings.presets = this.settings.presets.filter((p) => p.typeId !== "image");
+			this.settings.newPanelBlocks = this.settings.newPanelBlocks.filter((id) => id !== "image");
+			this.settings.exportReferences = (saved as { exportImages?: boolean }).exportImages ?? DEFAULT_SETTINGS.exportReferences;
+		}
+		delete (this.settings as { exportImages?: boolean }).exportImages;
+		for (const p of this.settings.presets) delete (p as { image?: unknown }).image;
 		for (const t of this.settings.blockTypes) if (!["description", "lettering", "freestyle"].includes(t.style)) t.style = "description";
 		this.settings.schema = SETTINGS_SCHEMA;
 		ensureSections(this.settings);
+	}
+
+	private async renameImages(oldPath: string, newPath: string) {
+		const openPaths = new Set<string>();
+		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_COMIC)) {
+			if (!(leaf.view instanceof ComicView)) continue;
+			if (leaf.view.file) openPaths.add(leaf.view.file.path);
+			await leaf.view.renameImages(oldPath, newPath);
+		}
+		for (const file of this.app.vault.getFiles()) {
+			if (file.extension !== FILE_EXTENSION || openPaths.has(file.path)) continue;
+			try {
+				const raw = await this.app.vault.read(file);
+				const doc = normalizeDoc(JSON.parse(raw), file.basename);
+				if (renameDocImages(doc, oldPath, newPath)) {
+					let views: ComicView[] = [];
+					// Read/modify atomically: never overwrite edits made while scanning other scripts.
+					await this.app.vault.process(file, (current) => {
+						views = this.app.workspace.getLeavesOfType(VIEW_TYPE_COMIC)
+							.map((leaf) => leaf.view)
+							.filter((view): view is ComicView => view instanceof ComicView && view.file?.path === file.path);
+						if (views.length) return current;
+						const latest = normalizeDoc(JSON.parse(current), file.basename);
+						return renameDocImages(latest, oldPath, newPath) ? JSON.stringify(latest, null, 2) : current;
+					});
+					for (const view of views) await view.renameImages(oldPath, newPath);
+				}
+			} catch (error) {
+				console.error(`Storyteller couldn't update images in ${file.path}`, error);
+				new Notice(`Couldn't update image references in ${file.path}. Check this script before moving more attachments.`);
+			}
+		}
+	}
+
+	private async loadExportImage(path: string): Promise<ExportImage> {
+		const file = this.app.vault.getAbstractFileByPath(path);
+		if (!(file instanceof TFile)) throw new Error(`Image missing: ${path}`);
+		const type = imageType(file.extension);
+		if (!type) throw new Error(`Unsupported image format: ${path}`);
+		const data = await this.app.vault.readBinary(file);
+		const url = URL.createObjectURL(new Blob([data]));
+		try {
+			const image = new Image();
+			await new Promise<void>((resolve, reject) => {
+				image.onload = () => resolve();
+				image.onerror = () => reject(new Error(`Couldn't decode image: ${path}`));
+				image.src = url;
+			});
+			return { data: new Uint8Array(data), type, width: image.naturalWidth, height: image.naturalHeight };
+		} finally {
+			URL.revokeObjectURL(url);
+		}
 	}
 
 	/**
@@ -363,7 +433,7 @@ export default class StorytellerPlugin extends Plugin {
 	private async exportTo(file: TFile, doc: ComicDoc, folder: string, quiet = false): Promise<boolean> {
 		const notice = new Notice(quiet ? `Exporting ${file.basename}.docx…` : "Exporting .docx…", 0);
 		try {
-			const buffer = await exportDocx(doc, this.settings);
+			const buffer = await exportDocx(doc, this.settings, (path) => this.loadExportImage(path));
 			const name = `${file.basename}.docx`;
 			const autoOpen = this.settings.openAfterExport;
 			let path: string;

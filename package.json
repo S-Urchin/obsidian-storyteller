@@ -1,6 +1,6 @@
 {
   "name": "obsidian-storyteller",
-  "version": "0.6.3",
+  "version": "0.7.0",
   "description": "Block-based comic script drafter for Obsidian with Word export.",
   "main": "main.js",
   "scripts": {
@@ -8,7 +8,8 @@
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "lint": "eslint src",
     "test": "node scripts/test.mjs",
-    "test:e2e": "node tests/e2e/editor.e2e.js"
+    "test:e2e": "node tests/e2e/editor.e2e.js",
+    "test:images-ui": "node tests/e2e/images.e2e.js"
   },
   "keywords": [
     "obsidian",

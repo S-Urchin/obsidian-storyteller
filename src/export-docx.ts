@@ -5,6 +5,7 @@ import {
 	Document,
 	HighlightColor as DocxHighlight,
 	ICommentOptions,
+	ImageRun,
 	Packer,
 	Paragraph,
 	ParagraphChild,
@@ -17,6 +18,16 @@ import {
 import { cutSegments, linksToText } from "./format";
 import { balloonNumbers, findType, freeFormat, pageLabel, panelLabel } from "./doc";
 import { Block, ComicDoc, HighlightColor, ItemMeta, SideNote, StorytellerSettings } from "./types";
+import { fileName, fitImage, ImageType, panelsWithImages } from "./images";
+
+export interface ExportImage {
+	data: Uint8Array;
+	type: ImageType;
+	width: number;
+	height: number;
+}
+
+export type ImageLoader = (path: string) => Promise<ExportImage>;
 
 /*
  * Layout follows Greg Pak's comic script template:
@@ -45,7 +56,15 @@ interface RunStyle {
 	highlight?: HighlightColor | null;
 }
 
-export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): Promise<ArrayBuffer> {
+export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings, loadImage?: ImageLoader): Promise<ArrayBuffer> {
+	// Reference images never go in the script itself: optionally, they follow it as an appendix.
+	const referenced = settings.exportReferences ? panelsWithImages(doc) : [];
+	const images = new Map<string, ExportImage>();
+	for (const { blocks } of referenced) for (const { image } of blocks) {
+		if (!image || images.has(image.path)) continue;
+		if (!loadImage) throw new Error("Image export needs a vault image loader.");
+		images.set(image.path, await loadImage(image.path));
+	}
 	const comments: ICommentOptions[] = [];
 	const balloons = balloonNumbers(doc, settings, settings.balloonScope);
 	const hl = (c: HighlightColor | null | undefined) => (settings.exportHighlights && c ? HIGHLIGHT_MAP[c] : undefined);
@@ -197,6 +216,29 @@ export async function exportDocx(doc: ComicDoc, settings: StorytellerSettings): 
 			}
 		});
 	});
+
+	if (referenced.length) {
+		body.push(action([run("VISUAL REFERENCES", { bold: true })], true));
+		for (const { blocks, pageIndex, panelIndex } of referenced) {
+			body.push(action([run(`${pageLabel(pageIndex, settings.pageNumberStyle)}, ${panelLabel(panelIndex).replace(/:$/, "")}`, { bold: true })]));
+			for (const block of blocks) {
+				const ref = block.image!;
+				const image = images.get(ref.path)!;
+				const alt = ref.alt || fileName(ref.path);
+				const children: ParagraphChild[] = [
+					new ImageRun({
+						type: image.type,
+						data: image.data,
+						transformation: fitImage(image.width, image.height),
+						altText: { title: alt, description: alt, name: ref.path },
+					}),
+				];
+				// The line it belongs to, so the artist knows what it's for.
+				if (block.text.trim()) children.push(new TextRun({ break: 1 }), ...inlineRuns(block.text, { italics: true }));
+				body.push(action(children));
+			}
+		}
+	}
 
 	const file = new Document({
 		creator: settings.authorName,

@@ -26,6 +26,12 @@ Press **?** in the editor at any time for help and every shortcut.
 - **Speaker field.** Type `MAYA (off)` and it splits into speaker and modifier. Names autocomplete from the script.
 - **Formatting you see as you type.** Bold, italic, underline and highlights in five colours, from shortcuts or the bar over selected text. No `**` markers to type, and styles combine.
 - **Freestyle blocks** for anything else (title cards, TO BE CONTINUED, notes): align, indent, box or resize them.
+- **Visual references beside the page.** A floating **References** dock left of the paper holds each panel's sketches and reference images (PNG, JPEG, GIF or BMP from your vault), with a note for the artist and alt text. The page itself stays text-only, so what you see is what Word gets.
+  - It follows the panel you're writing in; **All** lists every panel's references, and clicking a heading jumps to that panel.
+  - Click a thumbnail to see it full size. Drag it onto another panel to move it.
+  - Panels with references show a small 🖼 count in the paper's margin; click it to open them.
+  - **⇤** folds the dock to a slim strip (remembered). On narrow panes it starts folded and floats over the script when opened.
+  - Renaming or moving an image in your vault updates every script. Missing images say so instead of disappearing.
 - **Read mode** (Ctrl+E) shows the clean script. Double-click any line to edit it.
 
 ![Adding a line of dialogue, then bolding and highlighting words](docs/writing.gif)
@@ -84,6 +90,7 @@ Stats update as you write.
 ## Exporting to Word
 
 - **Export .docx** writes the template's styles: a page break per comic page, margin comments, red `[REVISE]` markers and your highlights.
+- **The script never contains images.** To send references along, turn on *Settings → Word export → Visual references appendix*: after the script, a new page lists each panel's images (scaled to fit) and notes under its page and panel label. Off by default. GIFs export as a still image; a missing or unreadable attachment stops the export with an error.
 - **Opens in Word** when done (you can turn this off).
 - **Choose where files go.** Add vault folders, *next to the script*, or folders on your computer. The ▾ arrow beside the button picks one and remembers it. Projects can have their own folder.
 
@@ -113,7 +120,7 @@ Commands in the command palette: *New comic script*, *Open comic projects*, *New
 | Block types | Your own block types, and which blocks a new panel starts with |
 | Numbering | `PAGE ONE` or `PAGE 1`; balloon numbers per page, per panel, or off |
 | Editor appearance | Draft font and size, light / dark / auto paper, animations, your name |
-| Word export | Comments, revision markers, highlights, page breaks, Word font, open after export, export folders |
+| Word export | Comments, revision markers, highlights, visual references appendix, page breaks, Word font, open after export, export folders |
 | New scripts | Folders new scripts can be created in |
 
 Project folders are set per project, from the ⚙ button in the Projects tab.
@@ -131,6 +138,8 @@ npm run build   # then copy main.js, manifest.json and styles.css as above
 
 `npm run dev` rebuilds on save, `npm run lint` runs Obsidian's review rules and `npm test` runs the unit tests.
 
+`npm run test:images-ui` checks the references dock in an isolated Chrome instance with a stubbed Obsidian host; it never opens a vault. Set `CHROME_PATH` if Chrome is not at its default Windows location. `npm run test:e2e` still requires a running Obsidian test vault (see the test file's setup instructions).
+
 Needs Obsidian 1.5.7 or newer.
 
 **Check a download:** releases are built by GitHub Actions from the tagged source and come with signed build attestations. To confirm a file is the one built from this repository, run `gh attestation verify main.js --repo S-Urchin/obsidian-storyteller` (the same works for `styles.css` and `manifest.json`).
@@ -145,5 +154,5 @@ Needs Obsidian 1.5.7 or newer.
 ## Privacy
 
 - No network access and no telemetry.
-- Reads and writes only your `.comic` scripts and the `.docx` files you export. Files leave the vault only if you choose a folder on your computer.
+- Reads and writes your `.comic` scripts and the `.docx` files you export, and reads vault images you attach as references. Image files are never modified or deleted by the plugin. Files leave the vault only if you choose an export folder on your computer.
 - Project lists and settings are stored in the plugin's own `data.json` in your vault.

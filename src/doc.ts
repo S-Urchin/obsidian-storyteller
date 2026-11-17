@@ -15,6 +15,7 @@ import {
 	NoteReply,
 	SideNote,
 } from "./types";
+import { loadBlockImage } from "./images";
 
 export function uid(): string {
 	return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -45,6 +46,10 @@ export function newBlock(type: BlockType): Block {
 
 export function blockFromPreset(preset: BlockPreset): Block {
 	return { ...meta(), typeId: preset.typeId, speaker: preset.speaker, modifier: preset.modifier, text: preset.text };
+}
+
+export function presetFromBlock(block: Block, name: string): BlockPreset {
+	return { id: uid(), name, typeId: block.typeId, speaker: block.speaker, modifier: block.modifier, text: block.text };
 }
 
 export function newPanel(settings: StorytellerSettings): Panel {
@@ -154,12 +159,37 @@ function loadBlock(v: unknown): Block {
 	};
 	const format = loadFormat(o.format);
 	if (format) block.format = format;
+	const image = loadBlockImage(o.image);
+	if (image) block.image = image;
 	return block;
 }
 
+/**
+ * Loads a panel. Earlier drafts kept images as separate "image" blocks (caption as text) or in a
+ * panel-wide list; both become an image on a block, so each block has at most one.
+ */
 function loadPanel(v: unknown): Panel {
 	const o = obj(v);
-	return { ...loadMeta(o), collapsed: !!o.collapsed, blocks: list(o.blocks).map(loadBlock) };
+	const panel: Panel = { ...loadMeta(o), collapsed: !!o.collapsed, blocks: [] };
+	for (const raw of list(o.blocks)) {
+		const block = loadBlock(raw);
+		if (block.typeId !== "image") {
+			panel.blocks.push(block);
+			continue;
+		}
+		// Old image block: its caption becomes a description, carrying the image.
+		if (!block.image && !block.text.trim() && !block.notes.length) continue;
+		panel.blocks.push({ ...block, typeId: "description" });
+	}
+	for (const raw of list(o.images)) {
+		const legacy = obj(raw);
+		const image = loadBlockImage({ path: legacy.path, alt: legacy.alt });
+		if (!image) continue;
+		const free = panel.blocks.find((b) => !b.image);
+		if (free) free.image = image;
+		else panel.blocks.push({ ...meta(), typeId: "description", speaker: "", modifier: "", text: str(legacy.note, ""), image });
+	}
+	return panel;
 }
 
 function loadPage(v: unknown): Page {

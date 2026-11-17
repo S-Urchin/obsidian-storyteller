@@ -19,7 +19,7 @@ export default defineConfig([
 				"warn",
 				{
 					brands: ["Word", "Google Docs", "Greg Pak", "Courier Final Draft", "Courier Prime", "Courier New", "Obsidian"],
-					acronyms: ["CAPTION", "SFX", "RADIO", "CSS", "JSON"],
+					acronyms: ["CAPTION", "SFX", "RADIO", "CSS", "JSON", "PNG", "JPEG", "GIF", "BMP"],
 				},
 			],
 		},

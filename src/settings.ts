@@ -189,7 +189,7 @@ export class StorytellerSettingTab extends PluginSettingTab {
 
 		// ---- Export
 		new Setting(containerEl).setName("Word export").setHeading();
-		const toggle = (name: string, desc: string, key: "exportComments" | "exportRevisionMarks" | "exportHighlights" | "exportPageBreaks" | "openAfterExport") =>
+		const toggle = (name: string, desc: string, key: "exportComments" | "exportRevisionMarks" | "exportHighlights" | "exportReferences" | "exportPageBreaks" | "openAfterExport") =>
 			new Setting(containerEl).setName(name).setDesc(desc).addToggle((t) =>
 				t.setValue(s[key]).onChange(async (v) => {
 					s[key] = v;
@@ -199,6 +199,7 @@ export class StorytellerSettingTab extends PluginSettingTab {
 		toggle("Comments", "Unresolved comments become Word margin comments.", "exportComments");
 		toggle("Revision markers", "Prefix items marked for revision with a red [REVISE].", "exportRevisionMarks");
 		toggle("Highlights", "Carry ==marked text== highlights into Word.", "exportHighlights");
+		toggle("Visual references appendix", "After the script, add a page with each block's reference image, under its page and panel. The script itself never contains images.", "exportReferences");
 		toggle("Page break per page", "Start every comic page on a new Word page.", "exportPageBreaks");
 		new Setting(containerEl)
 			.setName("Word font")

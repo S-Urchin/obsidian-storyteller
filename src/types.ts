@@ -46,6 +46,18 @@ export interface ItemMeta {
  */
 export type BlockStyle = "description" | "lettering" | "freestyle";
 
+/**
+ * A reference image on a block (sketch, character sheet, photo). It's shown as a thumbnail in
+ * a column left of the paper, never in the script text, so the page stays what Word prints.
+ */
+export interface BlockImage {
+	/** Full vault-relative attachment path, not a system path or resource URL. */
+	path: string;
+	alt: string;
+	/** Folded to a small chip in the image column. */
+	hidden: boolean;
+}
+
 /** Whole-block layout for freestyle blocks. */
 export interface FreeFormat {
 	align: "left" | "center" | "right";
@@ -98,6 +110,8 @@ export interface Block extends ItemMeta {
 	text: string;
 	/** Freestyle blocks only. */
 	format?: FreeFormat;
+	/** At most one reference image per block. */
+	image?: BlockImage;
 }
 
 export interface Panel extends ItemMeta {
@@ -178,6 +192,8 @@ export interface StorytellerSettings {
 	exportComments: boolean;
 	exportRevisionMarks: boolean;
 	exportHighlights: boolean;
+	/** Adds a "Visual references" appendix with the blocks' images after the script. */
+	exportReferences: boolean;
 	exportPageBreaks: boolean;
 	exportFont: string;
 	/** Where .docx files can go: vault folders, full paths on the computer, or "" for next to the script. */

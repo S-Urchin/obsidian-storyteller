@@ -1,6 +1,43 @@
-import { App, Modal, Setting } from "obsidian";
+import { App, FuzzySuggestModal, Modal, Notice, Setting, TFile } from "obsidian";
 import { uid } from "./doc";
 import { BlockStyle, BlockType } from "./types";
+import { imageType } from "./images";
+
+export function chooseVaultImage(app: App, onChoose: (file: TFile) => void) {
+	const files = app.vault.getFiles().filter((file) => imageType(file.extension));
+	if (!files.length) {
+		new Notice("Add a PNG, JPEG, GIF or BMP image to your vault first.");
+		return;
+	}
+	class ImagePicker extends FuzzySuggestModal<TFile> {
+		getItems() { return files; }
+		getItemText(file: TFile) { return file.path; }
+		onChooseItem(file: TFile) { onChoose(file); }
+	}
+	const picker = new ImagePicker(app);
+	picker.setPlaceholder("Choose a vault image (PNG, JPEG, GIF or BMP)");
+	picker.open();
+}
+
+/** A reference image at full size, with its alt text and note underneath. */
+export class ImageViewModal extends Modal {
+	constructor(app: App, private src: string, private label: string, private alt: string, private note: string) {
+		super(app);
+	}
+
+	onOpen() {
+		this.modalEl.addClass("st-image-modal");
+		this.titleEl.setText(this.label);
+		const img = this.contentEl.createEl("img", { cls: "st-image-full", attr: { alt: this.alt, src: this.src } });
+		img.addEventListener("click", () => this.close());
+		if (this.note.trim()) this.contentEl.createDiv({ cls: "st-image-full-note", text: this.note });
+		if (this.alt.trim()) this.contentEl.createDiv({ cls: "st-image-full-alt", text: "Alt text: " + this.alt });
+	}
+
+	onClose() {
+		this.contentEl.empty();
+	}
+}
 
 /** Creates or edits a block type ("Dialogue", "SFX", "Flashback caption", ...). */
 export class BlockTypeModal extends Modal {
@@ -195,6 +232,7 @@ export class HelpModal extends Modal {
 	private renderTips(el: HTMLElement) {
 		const tips: [string, string][] = [
 			["Freestyle blocks", "For anything that isn't a description or dialogue: title cards, TO BE CONTINUED, notes to the colorist, lists. Click into one for its toolbar (align, indent, size, box), or right-click \u2192 Freestyle format. Bold, italic and the rest work inside it as usual."],
+			["Reference images", "Hover a block and click the image button left of it to attach a sketch or reference from your vault (one per block). Its thumbnail sits in the column left of the paper: click it or the enlarge button to see it full size, or hide it to a small chip. Images never appear on the page: turn on Settings → Word export → Visual references appendix to add them after the script."],
 			["Your own blocks", "Use + New block type in the palette for anything you need, such as RADIO, FLASHBACK CAPTION or EDITOR'S NOTE. Right-click a finished block and choose “Save as reusable block” to keep it, text included."],
 			["Palette sections", "Group blocks however you like with + New section, and drag blocks between sections. Drag a block from the script into a section to save it there."],
 			["Edit blocks in the palette", "Drag the palette's right edge wider and every block becomes an editor for its name, colour, speaker and default text."],
