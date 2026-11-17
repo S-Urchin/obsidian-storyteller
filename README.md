@@ -6,7 +6,9 @@ Scripts are `.comic` files with their own editor. The layout follows Greg Pak's 
 
 ![The editor: block palette, pages list, script and comments](docs/editor.png)
 
-**Contents:** [Quick start](#quick-start) · [Writing](#writing) · [Organising a script](#organising-a-script) · [Projects](#projects) · [Exporting to Word](#exporting-to-word) · [Keyboard shortcuts](#keyboard-shortcuts) · [Settings](#settings) · [Install](#install) · [Tips](#tips) · [Privacy](#privacy)
+**New in 0.7.0:** [reference images on any line](#reference-images), an idea by Yodamon.
+
+**Contents:** [Quick start](#quick-start) · [Writing](#writing) · [Reference images](#reference-images) · [Organising a script](#organising-a-script) · [Projects](#projects) · [Exporting to Word](#exporting-to-word) · [Keyboard shortcuts](#keyboard-shortcuts) · [Settings](#settings) · [Install](#install) · [Tips](#tips) · [Privacy](#privacy) · [Credits](#credits)
 
 ## Quick start
 
@@ -26,15 +28,24 @@ Press **?** in the editor at any time for help and every shortcut.
 - **Speaker field.** Type `MAYA (off)` and it splits into speaker and modifier. Names autocomplete from the script.
 - **Formatting you see as you type.** Bold, italic, underline and highlights in five colours, from shortcuts or the bar over selected text. No `**` markers to type, and styles combine.
 - **Freestyle blocks** for anything else (title cards, TO BE CONTINUED, notes): align, indent, box or resize them.
-- **Visual references beside the page.** A floating **References** dock left of the paper holds each panel's sketches and reference images (PNG, JPEG, GIF or BMP from your vault), with a note for the artist and alt text. The page itself stays text-only, so what you see is what Word gets.
-  - It follows the panel you're writing in; **All** lists every panel's references, and clicking a heading jumps to that panel.
-  - Click a thumbnail to see it full size. Drag it onto another panel to move it.
-  - Panels with references show a small 🖼 count in the paper's margin; click it to open them.
-  - **⇤** folds the dock to a slim strip (remembered). On narrow panes it starts folded and floats over the script when opened.
-  - Renaming or moving an image in your vault updates every script. Missing images say so instead of disappearing.
+- **Reference images** on any line, kept beside the page (see [below](#reference-images)).
 - **Read mode** (Ctrl+E) shows the clean script. Double-click any line to edit it.
 
 ![Adding a line of dialogue, then bolding and highlighting words](docs/writing.gif)
+
+## Reference images
+
+Attach a sketch, layout or character reference to any line of the script, so the artist sees exactly what you mean. *This was Yodamon's idea.*
+
+![Adding a sketch to a line, enlarging it, then hiding it to a chip](docs/images.gif)
+
+- **Add:** hover a line and click the image button that appears on its left, then pick a PNG, JPEG, GIF or BMP from your vault. One image per line.
+- **See it:** the thumbnail sits in a column left of the paper, level with its line, the way comments sit on the right. Point at it to highlight its line.
+- **Enlarge** by clicking the thumbnail or the ⤢ button.
+- **Hide** it to a small chip when you need the room, and show it again any time. The choice is saved with the script.
+- **Remove** it with the bin button (Ctrl+Z brings it back). The image file stays in your vault.
+- **The page stays clean.** Images never appear on the page, in Read mode or in the script part of the Word file, so what you see is still what Word gets. To send them along, see [Exporting to Word](#exporting-to-word).
+- Renaming or moving an image in your vault updates every script. A missing image says so instead of disappearing.
 
 ## Organising a script
 
@@ -90,7 +101,7 @@ Stats update as you write.
 ## Exporting to Word
 
 - **Export .docx** writes the template's styles: a page break per comic page, margin comments, red `[REVISE]` markers and your highlights.
-- **The script never contains images.** To send references along, turn on *Settings → Word export → Visual references appendix*: after the script, a new page lists each panel's images (scaled to fit) and notes under its page and panel label. Off by default. GIFs export as a still image; a missing or unreadable attachment stops the export with an error.
+- **The script never contains images.** To send [reference images](#reference-images) along, turn on *Settings → Word export → Visual references appendix*: after the script, a new page shows each image (scaled to fit) under its page and panel, with the line it belongs to. Hidden images are included. Off by default. GIFs export as a still image; a missing or unreadable attachment stops the export with an error.
 - **Opens in Word** when done (you can turn this off).
 - **Choose where files go.** Add vault folders, *next to the script*, or folders on your computer. The ▾ arrow beside the button picks one and remembers it. Projects can have their own folder.
 
@@ -138,7 +149,7 @@ npm run build   # then copy main.js, manifest.json and styles.css as above
 
 `npm run dev` rebuilds on save, `npm run lint` runs Obsidian's review rules and `npm test` runs the unit tests.
 
-`npm run test:images-ui` checks the references dock in an isolated Chrome instance with a stubbed Obsidian host; it never opens a vault. Set `CHROME_PATH` if Chrome is not at its default Windows location. `npm run test:e2e` still requires a running Obsidian test vault (see the test file's setup instructions).
+`npm run test:images-ui` checks reference images in an isolated Chrome instance with a stubbed Obsidian host; it never opens a vault. Set `CHROME_PATH` if Chrome is not at its default Windows location. `npm run test:e2e` still requires a running Obsidian test vault (see the test file's setup instructions).
 
 Needs Obsidian 1.5.7 or newer.
 
@@ -156,3 +167,7 @@ Needs Obsidian 1.5.7 or newer.
 - No network access and no telemetry.
 - Reads and writes your `.comic` scripts and the `.docx` files you export, and reads vault images you attach as references. Image files are never modified or deleted by the plugin. Files leave the vault only if you choose an export folder on your computer.
 - Project lists and settings are stored in the plugin's own `data.json` in your vault.
+
+## Credits
+
+- **Reference images** were Yodamon's idea. Thank you!
