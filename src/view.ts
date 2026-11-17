@@ -113,6 +113,10 @@ export class ComicView extends TextFileView {
 	private readMode = false;
 	/** Column left of the paper with each block's image thumbnail (like the comment margin on the right). */
 	private imageColEl: HTMLElement | null = null;
+	/** Floating image windows by block id, in a layer over the whole view (kept across redraws). */
+	private floats = new Map<string, HTMLElement>();
+	private floatLayer: HTMLElement | null = null;
+	private floatZ = 1;
 
 	// Text editors (one per block), and the formatting bar that appears over a selection.
 	private editors = new Set<RichEditor>();
@@ -321,6 +325,7 @@ export class ComicView extends TextFileView {
 	async onClose() {
 		this.sheetObserver?.disconnect();
 		this.destroyEditors();
+		for (const id of [...this.floats.keys()]) this.closeFloat(id);
 	}
 
 	onResize() {
@@ -917,6 +922,7 @@ export class ComicView extends TextFileView {
 		this.renderNav();
 		this.scriptEl.scrollTop = scrollTop;
 		this.updateStats();
+		this.syncFloats();
 		if (this.contentEl.isConnected && !reading) this.animateScript();
 
 		window.requestAnimationFrame(() => {
@@ -955,6 +961,7 @@ export class ComicView extends TextFileView {
 		this.updateStats();
 		this.scriptEl.scrollTop = scrollTop;
 		this.shownItems = new Set(Array.from(this.scriptEl.querySelectorAll<HTMLElement>(".st-sheet [data-id]"), (el) => el.dataset.id!));
+		this.syncFloats();
 		window.requestAnimationFrame(() => this.layoutMargin());
 	}
 
@@ -1801,13 +1808,12 @@ export class ComicView extends TextFileView {
 		const el = this.itemShell(parent, "block", ref);
 		el.addClass("st-style-" + type.style);
 		el.setCssProps({ "--st-type-color": type.color });
-		el.setAttr("aria-label", type.name);
-		el.setAttr("data-tooltip-position", "left");
 
 		const gutter = el.createDiv("st-gutter st-block-gutter");
 		if (!locked && !block.image) {
 			// One image per block: the button goes once there's a thumbnail (which has its own controls).
-			this.iconBtn(gutter, "image-plus", "Add an image to this block", () => this.chooseBlockImage(block.id), "st-add-image");
+			// Out of the Tab order (it would sit between every line); the keyboard uses the block menu instead.
+			this.iconBtn(gutter, "image-plus", "Add an image to this block", () => this.chooseBlockImage(block.id), "st-add-image").tabIndex = -1;
 		}
 		// A description carrying "Panel N:" is the panel's heading line: only the panel's grip
 		// belongs there, or grabbing the nearer one moves the text and leaves the label behind.
@@ -1982,7 +1988,7 @@ export class ComicView extends TextFileView {
 		const src = file instanceof TFile && imageType(file.extension) ? this.app.vault.getResourcePath(file) : null;
 		const alt = image.alt || name;
 		const enlarge = () => {
-			if (src) new ImageViewModal(this.app, src, `${describeRef(ref, this.plugin.settings)} · ${name}`, alt, "").open();
+			if (src) new ImageViewModal(this.app, src, `${describeRef(ref, this.plugin.settings)} · ${name}`, alt, "", () => this.floatImage(block.id)).open();
 		};
 
 		if (!src) {
@@ -2010,7 +2016,10 @@ export class ComicView extends TextFileView {
 		}
 
 		const tools = card.createDiv("st-image-tools");
-		if (src) this.iconBtn(tools, "maximize-2", "Enlarge", enlarge, "st-image-enlarge");
+		if (src) {
+			this.iconBtn(tools, "maximize-2", "Enlarge", enlarge, "st-image-enlarge");
+			this.iconBtn(tools, "picture-in-picture-2", "Float: keep it open while you write", () => this.floatImage(block.id), "st-image-float");
+		}
 		if (!locked) {
 			if (src) {
 				this.iconBtn(tools, image.hidden ? "eye" : "eye-off", image.hidden ? "Show image" : "Hide image", () =>
@@ -2018,10 +2027,167 @@ export class ComicView extends TextFileView {
 						if (block.image) block.image.hidden = !block.image.hidden;
 					}), "st-image-hide");
 			}
-			this.iconBtn(tools, "trash-2", "Remove image (the file stays in your vault)", () => {
-				this.mutate(() => delete block.image);
-				this.undoNotice(`Removed ${name} from the block.`);
-			}, "st-image-remove");
+			this.iconBtn(tools, "replace", "Replace image", () => this.chooseBlockImage(block.id), "st-image-replace");
+			this.iconBtn(tools, "trash-2", "Remove image (the file stays in your vault)", () => this.removeBlockImage(block.id), "st-image-remove");
+		}
+	}
+
+	private removeBlockImage(blockId: string) {
+		const ref = findRef(this.doc, blockId);
+		const image = ref?.block?.image;
+		if (!ref?.block || !image || isLocked(ref)) return;
+		this.mutate(() => delete ref.block!.image);
+		this.undoNotice(`Removed ${fileName(image.path)} from the line.`);
+	}
+
+	/**
+	 * Adds an image to a panel: on its first line without one, or, when every line already has
+	 * one, on a new description line at the end (each line holds one image).
+	 */
+	addPanelImage(panelId: string) {
+		chooseVaultImage(this.app, (file) => {
+			const ref = findRef(this.doc, panelId);
+			const panel = ref?.kind === "panel" ? ref.panel : undefined;
+			if (!ref || !panel || isLocked(ref)) {
+				new Notice("That panel was removed or locked. No image was added.");
+				return;
+			}
+			const image = { path: file.path, alt: "", hidden: false };
+			const free = panel.blocks.find((b) => !b.image && !b.locked);
+			this.mutate(() => {
+				if (free) free.image = image;
+				else panel.blocks.push({ ...newBlock(findType(this.plugin.settings, "description")), image });
+			});
+			if (!free) new Notice("Every line in this panel already had an image, so it went on a new description line.");
+		});
+	}
+
+	// ---------------------------------------------------------------- floating image windows
+
+	/**
+	 * Opens a block's image in a small window over the editor that stays open while you write:
+	 * drag it by its title bar, resize it from the corner. It never takes the keyboard focus.
+	 */
+	floatImage(blockId: string) {
+		const open = this.floats.get(blockId);
+		if (open) {
+			this.raiseFloat(open);
+			if (this.motion) playOnce(open, "st-float-flash");
+			return;
+		}
+		const ref = findRef(this.doc, blockId);
+		if (!ref?.block?.image) return;
+		const layer = (this.floatLayer ??= this.containerEl.createDiv("st-float-layer"));
+		this.containerEl.addClass("st-has-floats");
+		// Named by its title bar (aria-labelledby), not aria-label: Obsidian would show a tooltip over the picture.
+		const titleId = "st-float-title-" + uid();
+		const win = layer.createDiv({ cls: "st-float", attr: { "data-block": blockId, role: "dialog", "aria-labelledby": titleId } });
+		const bar = win.createDiv("st-float-bar");
+		setIcon(bar.createSpan("st-float-icon"), "image");
+		bar.createSpan({ cls: "st-float-title", attr: { id: titleId } });
+		this.iconBtn(bar, "x", "Close", () => this.closeFloat(blockId), "st-float-close");
+		win.createDiv("st-float-body");
+		const grip = win.createDiv({ cls: "st-float-resize", attr: { "aria-label": "Drag to resize" } });
+
+		// Start at the right of the editor, each new window a little lower than the last.
+		const host = layer.getBoundingClientRect();
+		const n = this.floats.size;
+		const width = Math.min(340, Math.max(200, host.width / 3));
+		win.setCssStyles({
+			width: width + "px",
+			height: Math.round(width * 0.8) + "px",
+			left: Math.max(8, host.width - width - 24 - n * 28) + "px",
+			top: Math.min(Math.max(8, host.height - 160), 96 + n * 28) + "px",
+		});
+		this.floats.set(blockId, win);
+		this.raiseFloat(win);
+		this.updateFloat(blockId);
+
+		// Clicking the window must not pull the cursor out of the text you're typing in.
+		win.addEventListener("mousedown", (e) => {
+			if (!(e.target as HTMLElement).closest("button")) e.preventDefault();
+			this.raiseFloat(win);
+		});
+		this.dragFloat(bar, win, (dx, dy, start) => ({ left: start.left + dx, top: start.top + dy }));
+		this.dragFloat(grip, win, (dx, dy, start) => ({ width: Math.max(160, start.width + dx), height: Math.max(120, start.height + dy) }));
+	}
+
+	/** Pointer-drags `handle`, applying `apply(dx, dy, start)` to the window and keeping its title bar on screen. */
+	private dragFloat(handle: HTMLElement, win: HTMLElement, apply: (dx: number, dy: number, start: { left: number; top: number; width: number; height: number }) => Partial<Record<"left" | "top" | "width" | "height", number>>) {
+		handle.addEventListener("pointerdown", (e) => {
+			if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
+			e.preventDefault();
+			const start = { left: win.offsetLeft, top: win.offsetTop, width: win.offsetWidth, height: win.offsetHeight };
+			const [x0, y0] = [e.clientX, e.clientY];
+			handle.setPointerCapture(e.pointerId);
+			win.addClass("is-moving");
+			const move = (ev: PointerEvent) => {
+				const next = apply(ev.clientX - x0, ev.clientY - y0, start);
+				const layer = this.floatLayer;
+				if (layer) {
+					const maxLeft = layer.clientWidth - 60;
+					const maxTop = layer.clientHeight - 32;
+					if (next.left !== undefined) next.left = Math.min(Math.max(next.left, 60 - (next.width ?? start.width)), maxLeft);
+					if (next.top !== undefined) next.top = Math.min(Math.max(next.top, 0), maxTop);
+				}
+				const css: Record<string, string> = {};
+				for (const [k, v] of Object.entries(next)) css[k] = Math.round(v) + "px";
+				win.setCssStyles(css);
+			};
+			const up = () => {
+				handle.removeEventListener("pointermove", move);
+				handle.removeEventListener("pointerup", up);
+				handle.removeEventListener("pointercancel", up);
+				win.removeClass("is-moving");
+			};
+			handle.addEventListener("pointermove", move);
+			handle.addEventListener("pointerup", up);
+			handle.addEventListener("pointercancel", up);
+		});
+	}
+
+	private raiseFloat(win: HTMLElement) {
+		win.setCssStyles({ zIndex: String(++this.floatZ) });
+	}
+
+	/** Shows the block's current image in its window; closes the window if the block or its image is gone. */
+	private updateFloat(blockId: string) {
+		const win = this.floats.get(blockId);
+		if (!win) return;
+		const ref = this.loadError === null ? findRef(this.doc, blockId) : null;
+		const image = ref?.block?.image;
+		if (!ref || !image) return this.closeFloat(blockId);
+		const name = fileName(image.path);
+		const label = `${describeRef(ref, this.plugin.settings)} · ${name}`;
+		win.querySelector(".st-float-title")?.setText(label);
+		const body = win.querySelector<HTMLElement>(".st-float-body");
+		if (!body) return;
+		const file = this.app.vault.getAbstractFileByPath(image.path);
+		const src = file instanceof TFile && imageType(file.extension) ? this.app.vault.getResourcePath(file) : null;
+		const img = body.querySelector("img");
+		if (src && img?.getAttribute("src") === src) {
+			img.alt = image.alt || name;
+			return;
+		}
+		body.empty();
+		if (!src) {
+			body.createDiv({ cls: "st-image-missing", text: `Missing: ${image.path}` });
+			return;
+		}
+		body.createEl("img", { attr: { src, alt: image.alt || name, draggable: "false" } });
+	}
+
+	private syncFloats() {
+		for (const id of [...this.floats.keys()]) this.updateFloat(id);
+	}
+
+	closeFloat(blockId: string) {
+		this.floats.get(blockId)?.remove();
+		this.floats.delete(blockId);
+		if (!this.floats.size) {
+			this.floatLayer?.remove();
+			this.floatLayer = null;
+			this.containerEl.removeClass("st-has-floats");
 		}
 	}
 
@@ -2616,7 +2782,8 @@ export class ComicView extends TextFileView {
 	}
 
 	private dragHandle(gutter: HTMLElement, itemEl: HTMLElement, ref: ItemRef, locked: boolean) {
-		const h = gutter.createSpan({ cls: "st-handle", attr: { "aria-label": locked ? "Locked" : "Drag to move · right-click for options" } });
+		const what = ref.kind === "block" && ref.block ? findType(this.plugin.settings, ref.block.typeId).name + " · " : "";
+		const h = gutter.createSpan({ cls: "st-handle", attr: { "aria-label": what + (locked ? "Locked" : "Drag to move · right-click for options") } });
 		setIcon(h, "grip-vertical");
 		h.addEventListener("click", (e) => this.itemMenu(e, ref));
 		// Containers that are locked can't lose children either, so check the source container too.
@@ -2697,6 +2864,19 @@ export class ComicView extends TextFileView {
 			menu.addItem((i) => i.setTitle("Comment on selected words").setIcon("quote").onClick(() => this.commentOnSelection(ed)));
 		}
 		menu.addItem((i) => i.setTitle(ref.kind === "block" ? "Comment on whole block" : "Note or comment").setIcon("message-square-plus").onClick(() => this.startComment(item.id)));
+		menu.addSeparator();
+		// Images: this line's, and (as a fallback to the buttons) the panel's.
+		const block = ref.block;
+		const canEdit = !isLocked(ref);
+		if (block && canEdit) menu.addItem((i) => i.setTitle(block.image ? "Replace image…" : "Add image to this line…").setIcon("image-plus").onClick(() => this.chooseBlockImage(block.id)));
+		if (block?.image) {
+			menu.addItem((i) => i.setTitle("Float image").setIcon("picture-in-picture-2").onClick(() => this.floatImage(block.id)));
+			if (canEdit) menu.addItem((i) => i.setTitle("Remove image").setIcon("image-minus").onClick(() => this.removeBlockImage(block.id)));
+		}
+		const panel = ref.kind === "panel" ? ref.panel : ref.kind === "block" ? ref.panel : undefined;
+		if (panel && !ref.page.locked && !panel.locked) {
+			menu.addItem((i) => i.setTitle("Add image to panel…").setIcon("images").onClick(() => this.addPanelImage(panel.id)));
+		}
 		menu.addSeparator();
 
 		menu.addItem((i) => i.setTitle(item.pinned ? "Unpin" : "Pin").setIcon("pin").onClick(() => this.mutate(() => (item.pinned = !item.pinned))));

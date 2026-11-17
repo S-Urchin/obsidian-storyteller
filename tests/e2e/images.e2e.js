@@ -12,7 +12,7 @@ export class TFile { constructor(path) { this.path = path; this.extension = path
 export class TFolder {}
 export class Scope { register() {} }
 export class TextFileView {
-	constructor(leaf) { this.app = leaf.app; this.contentEl = document.createElement("div"); }
+	constructor(leaf) { this.app = leaf.app; this.containerEl = document.createElement("div"); this.contentEl = this.containerEl.appendChild(document.createElement("div")); }
 	requestSave() {}
 	async save() { this.saved = this.getViewData(); }
 }
@@ -29,13 +29,23 @@ export class FuzzySuggestModal {
 export class SuggestModal extends FuzzySuggestModal {}
 export class Notice { constructor(message) { window.notices.push(message); } }
 export class Menu {}
-export class Setting {}
+export class Setting {
+	constructor(el) { this.el = el; }
+	setClass() { return this; }
+	addButton(cb) {
+		const b = this.el.appendChild(document.createElement("button"));
+		const api = { setButtonText(t) { b.textContent = t; return api; }, onClick(f) { b.addEventListener("click", f); return api; } };
+		cb(api);
+		return this;
+	}
+}
 export class Plugin {}
 export class ItemView {}
 export class PluginSettingTab {}
 export const Platform = { isDesktop: true };
 export const Keymap = {};
 export function normalizePath(path) { return path; }
+export function requireApiVersion() { return false; }
 export function setIcon(el, icon) { el.dataset.icon = icon; }
 `;
 
@@ -114,7 +124,7 @@ export function setIcon(el, icon) { el.dataset.icon = icon; }
 			};
 			const plugin = { settings, exportFolders: () => [""], saveSettings: async () => {} };
 			const view = new ComicView({ app }, plugin);
-			document.body.appendChild(view.contentEl);
+			document.body.appendChild(view.containerEl);
 			view.contentEl.className = "st-root st-paper-light";
 			// Keep the real toolbar, panel/block renderers, image column and rich text. Only omit unrelated navigation/margin layout.
 			view.queueLayout = () => {};
@@ -169,6 +179,19 @@ export function setIcon(el, icon) { el.dataset.icon = icon; }
 
 			card().querySelector(".st-image-thumb").click();
 			check(window.openedModal && window.openedModal.src === resource, "clicking the thumbnail enlarges it");
+			// The enlarged view can turn into a floating window that stays open while you write.
+			const floatBtn = [...window.openedModal.contentEl.querySelectorAll("button")].find((b) => b.textContent === "Keep open while writing");
+			check(floatBtn, "the enlarged view offers to keep it open");
+			floatBtn.click();
+			const floatWin = () => view.containerEl.querySelector(`.st-float[data-block="${live().id}"]`);
+			check(floatWin() && floatWin().querySelector(".st-float-body img").getAttribute("src") === resource, "it opens as a floating window over the editor");
+			card().querySelector(".st-image-float").click();
+			check(view.containerEl.querySelectorAll(".st-float").length === 1, "floating the same image again reuses its window");
+			view.renderAll();
+			check(floatWin(), "the floating window survives a redraw");
+			floatWin().querySelector(".st-float-close").click();
+			check(!floatWin() && !view.containerEl.querySelector(".st-float-layer"), "closing removes it");
+			check(addBtn(view.doc.pages[0].panels[0].blocks[0]).tabIndex === -1, "the add button stays out of the Tab order");
 			window.openedModal = null;
 			card().querySelector(".st-image-enlarge").click();
 			check(window.openedModal && window.openedModal.src === resource, "the enlarge button enlarges it");
@@ -202,6 +225,20 @@ export function setIcon(el, icon) { el.dataset.icon = icon; }
 			check(!live().image && !view.contentEl.querySelector(".st-image-col") && addBtn(live()), "remove takes the image off and brings the add button back");
 			view.undo();
 			check(live().image && card(), "undo restores the image");
+
+			// Replace from the thumbnail, then add to a panel whose only free line is taken.
+			card().querySelector(".st-image-replace").click();
+			window.imagePicker.onChooseItem(file);
+			check(live().image && live().image.path === file.path && view.contentEl.querySelectorAll(".st-image-card").length === 1, "replace swaps the image, still one per line");
+			const panelId = view.doc.pages[0].panels[0].id;
+			view.doc.pages[0].panels[0].blocks[0].image = { path: file.path, alt: "", hidden: false };
+			view.addPanelImage(panelId);
+			window.imagePicker.onChooseItem(file);
+			const after = view.doc.pages[0].panels[0].blocks;
+			check(after.length === 3 && after[2].typeId === "description" && after[2].image.path === file.path, "full panel: Add image to panel puts it on a new description line");
+			view.undo();
+			delete view.doc.pages[0].panels[0].blocks[0].image;
+			view.renderAll();
 
 			// Missing file is explicit.
 			files.clear();

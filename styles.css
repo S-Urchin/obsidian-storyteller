@@ -895,8 +895,14 @@
 	caret-color: var(--st-sheet-fg);
 }
 .st-root .st-sheet .st-text .cm-line { padding: 0; }
-/* "Panel 1:" sits over the first line; wrapped lines return to the margin */
-.st-root .st-sheet .st-text .cm-line:first-child { text-indent: var(--st-first-indent, 0); }
+/* "Panel 1:" sits over the first line; an empty inline box pushes that line past it, and wrapped
+   lines return to the margin (a spacer, which every Obsidian version supports fully) */
+.st-root .st-sheet .st-text .cm-line:first-child::before,
+.st-root .st-sheet .st-text-static::before {
+	content: "";
+	display: inline-block;
+	width: var(--st-first-indent, 0);
+}
 /* CodeMirror's zero-width helpers beside hidden markers sit "text-top", which pushes the line down 1px */
 .st-root .st-sheet .st-text .cm-widgetBuffer { vertical-align: top; }
 .st-root .st-sheet .st-text .cm-placeholder { color: var(--st-sheet-muted); opacity: 0.6; }
@@ -909,7 +915,6 @@
 	white-space: break-spaces;
 	word-break: break-word;
 	overflow-wrap: anywhere;
-	text-indent: var(--st-first-indent, 0);
 	cursor: text;
 	outline: none;
 }
@@ -1715,11 +1720,22 @@
    Block images: one per block, as thumbnails in a column left of the paper
    (mirroring the comment margin on the right), never on the page itself.
    =================================================================== */
-/* the add-image button sits in the block's left gutter, beside the drag handle */
-.st-root button.st-add-image { opacity: 0; padding: 0 1px; height: auto; color: var(--st-sheet-muted); }
+/* the add-image button sits just outside the paper's left edge, on the desk where thumbnails go:
+   the same spot on every line, centred on its first row, clear of the handles and collapse arrows */
+.st-root .st-gutter button.st-add-image {
+	position: absolute;
+	right: calc(0.75in + 6px);
+	top: 50%;
+	transform: translateY(-50%);
+	opacity: 0;
+	padding: 0 1px;
+	height: auto;
+	color: var(--st-sheet-muted);
+	transition: opacity 120ms 150ms;
+}
 .st-root button.st-add-image svg { width: 15px; height: 15px; }
 .st-item:hover > .st-gutter button.st-add-image,
-.st-item:focus-within > .st-gutter button.st-add-image { opacity: 0.55; }
+.st-item:focus-within > .st-gutter button.st-add-image { opacity: 0.55; transition-delay: 0s; }
 .st-root .st-item > .st-gutter button.st-add-image:hover,
 .st-root .st-item > .st-gutter button.st-add-image:focus-visible { opacity: 1; }
 
@@ -1730,8 +1746,10 @@
 	font-family: var(--font-interface);
 	font-size: 12px;
 }
+/* leave a lane between thumbnails and the paper for the add-image buttons (26px with the canvas gap) */
+.st-image-col { margin-right: 10px; }
 .st-root.st-paper-dark .st-image-col,
-.theme-dark .st-root.st-paper-auto .st-image-col { margin-right: 16px; }
+.theme-dark .st-root.st-paper-auto .st-image-col { margin-right: 26px; }
 .st-image-layer { position: relative; }
 .st-image-card {
 	position: absolute;
@@ -1769,7 +1787,67 @@
 .st-image-full-note { margin-top: 10px; }
 .st-image-full-alt { margin-top: 6px; color: var(--text-muted); font-size: var(--font-ui-small); }
 
-/* narrow panes: a slimmer image column */
+/* narrow panes: a slimmer image column, and the add button tucked into the narrower margin */
 @container (max-width: 900px) {
 	.st-image-col { flex-basis: 84px; }
+	.st-root .st-gutter button.st-add-image { right: calc(0.55in + 2px); }
+	.st-script { padding-left: 24px; }
 }
+
+/* ---------- floating image windows: stay open while you write ---------- */
+.st-has-floats { position: relative; }
+.st-float-layer { position: absolute; inset: 0; z-index: 30; pointer-events: none; overflow: hidden; }
+.st-float {
+	position: absolute;
+	display: flex;
+	flex-direction: column;
+	min-width: 160px;
+	min-height: 120px;
+	pointer-events: auto;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m, 8px);
+	box-shadow: var(--shadow-l);
+	overflow: hidden;
+}
+.st-float.is-moving { opacity: 0.92; }
+.st-float-bar {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 3px 4px 3px 8px;
+	background: var(--background-secondary);
+	border-bottom: 1px solid var(--background-modifier-border);
+	font: 12px var(--font-interface);
+	color: var(--text-muted);
+	cursor: grab;
+	user-select: none;
+	touch-action: none;
+}
+.st-float.is-moving .st-float-bar { cursor: grabbing; }
+.st-float-icon svg { width: 13px; height: 13px; }
+.st-float-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-root .st-float-bar .st-icon-btn { padding: 2px; height: auto; }
+.st-float-bar .st-icon-btn svg { width: 14px; height: 14px; }
+.st-float-body { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; background: var(--background-secondary-alt, var(--background-secondary)); }
+.st-float-body img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+.st-float-resize {
+	position: absolute;
+	right: 0;
+	bottom: 0;
+	width: 16px;
+	height: 16px;
+	cursor: nwse-resize;
+	touch-action: none;
+	background: linear-gradient(135deg, transparent 50%, var(--text-faint) 50%, var(--text-faint) 58%, transparent 58%, transparent 70%, var(--text-faint) 70%, var(--text-faint) 78%, transparent 78%);
+}
+.st-float.st-float-flash { animation: st-float-flash 600ms var(--st-ease); }
+@keyframes st-float-flash {
+	0%, 100% { box-shadow: var(--shadow-l); }
+	40% { box-shadow: 0 0 0 3px var(--interactive-accent), var(--shadow-l); }
+}
+@media (prefers-reduced-motion: reduce) {
+	.st-float.st-float-flash { animation: none; }
+}
+.st-image-full-actions { border-top: none; padding-bottom: 0; }

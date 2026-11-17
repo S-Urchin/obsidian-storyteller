@@ -527,7 +527,7 @@ const D0 = "Wide shot. A storm batters a lonely lighthouse on a black rock. One 
 			const line = (el) => el.querySelector(".cm-line") ?? el;
 			const eds = [...document.querySelectorAll(".st-sheet .st-text")];
 			const fs = eds.find((e) => e.innerText.includes("THE END"));
-			return { align: getComputedStyle(line(fs)).textAlign, indent: getComputedStyle(line(eds[0])).textIndent };
+			return { align: getComputedStyle(line(fs)).textAlign, indent: getComputedStyle(line(eds[0]), "::before").width };
 		});
 		let l = await look();
 		assert.equal(l.align, "center", "drawn");

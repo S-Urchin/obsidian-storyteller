@@ -6,6 +6,8 @@ Scripts are `.comic` files with their own editor. The layout follows Greg Pak's 
 
 ![The editor: block palette, pages list, script and comments](docs/editor.png)
 
+**New in 0.7.1:** [float a reference image](#floating-images) in a window you can drag and resize while you keep writing, a tidier image button, *Add image to panel…* in the right-click menu, and every setting in Obsidian's settings search.
+
 **New in 0.7.0:** [reference images on any line](#reference-images), an idea by Yodamon.
 
 **Contents:** [Quick start](#quick-start) · [Writing](#writing) · [Reference images](#reference-images) · [Organising a script](#organising-a-script) · [Projects](#projects) · [Exporting to Word](#exporting-to-word) · [Keyboard shortcuts](#keyboard-shortcuts) · [Settings](#settings) · [Install](#install) · [Tips](#tips) · [Privacy](#privacy) · [Credits](#credits)
@@ -39,13 +41,25 @@ Attach a sketch, layout or character reference to any line of the script, so the
 
 ![Adding a sketch to a line, enlarging it, then hiding it to a chip](docs/images.gif)
 
-- **Add:** hover a line and click the image button that appears on its left, then pick a PNG, JPEG, GIF or BMP from your vault. One image per line.
+- **Add:** hover a line and click the image button that appears just outside the paper's left edge, then pick a PNG, JPEG, GIF or BMP from your vault. One image per line.
+- **Right-click** any line for *Add image to this line…*, *Replace image…*, *Float image* and *Remove image*. *Add image to panel…* puts an image on the panel's first line without one, or on a new description line if every line already has one, so a panel can hold as many as you need.
 - **See it:** the thumbnail sits in a column left of the paper, level with its line, the way comments sit on the right. Point at it to highlight its line.
 - **Enlarge** by clicking the thumbnail or the ⤢ button.
+- **Float** it to keep it in view while you write ([see below](#floating-images)).
 - **Hide** it to a small chip when you need the room, and show it again any time. The choice is saved with the script.
-- **Remove** it with the bin button (Ctrl+Z brings it back). The image file stays in your vault.
+- **Replace** or **remove** it with the thumbnail's buttons (Ctrl+Z brings it back). The image file stays in your vault.
 - **The page stays clean.** Images never appear on the page, in Read mode or in the script part of the Word file, so what you see is still what Word gets. To send them along, see [Exporting to Word](#exporting-to-word).
 - Renaming or moving an image in your vault updates every script. A missing image says so instead of disappearing.
+
+### Floating images
+
+Keep a reference in view while you write: click a thumbnail's picture-in-picture button, choose *Keep open while writing* in the enlarged view, or right-click the line → *Float image*.
+
+![Floating a sketch, dragging it beside the page, resizing it and typing while it stays open](docs/float.gif)
+
+- **Move** it by its title bar and **resize** it from the bottom-right corner.
+- **Keep typing:** clicking the window never takes the cursor out of your line.
+- Open as many as you like. Each stays put through edits and in Read mode, and closes with its ×.
 
 ## Organising a script
 
@@ -134,7 +148,7 @@ Commands in the command palette: *New comic script*, *Open comic projects*, *New
 | Word export | Comments, revision markers, highlights, visual references appendix, page breaks, Word font, open after export, export folders |
 | New scripts | Folders new scripts can be created in |
 
-Project folders are set per project, from the ⚙ button in the Projects tab.
+Project folders are set per project, from the ⚙ button in the Projects tab. On Obsidian 1.13 or newer, every setting also turns up in Obsidian's settings search.
 
 ## Install
 
